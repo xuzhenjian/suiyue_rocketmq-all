@@ -36,7 +36,10 @@ public class RemotingCommand {
     public static final String SERIALIZE_TYPE_ENV = "ROCKETMQ_SERIALIZE_TYPE";
     public static final String REMOTING_VERSION_KEY = "rocketmq.remoting.version";
     private static final InternalLogger log = InternalLoggerFactory.getLogger(RemotingHelper.ROCKETMQ_REMOTING);
+
+    // 0:Request 1:Response
     private static final int RPC_TYPE = 0; // 0, REQUEST_COMMAND
+
     private static final int RPC_ONEWAY = 1; // 0, RPC
     private static final Map<Class<? extends CommandCustomHeader>, Field[]> CLASS_HASH_MAP =
         new HashMap<Class<? extends CommandCustomHeader>, Field[]>();
@@ -56,6 +59,7 @@ public class RemotingCommand {
     private static volatile int configVersion = -1;
     private static AtomicInteger requestId = new AtomicInteger(0);
 
+    // ROCKETMQ 默认支持的序列化是JSON
     private static SerializeType serializeTypeConfigInThisServer = SerializeType.JSON;
 
     static {
@@ -72,6 +76,8 @@ public class RemotingCommand {
     private int code;
     private LanguageCode language = LanguageCode.JAVA;
     private int version = 0;
+
+    // Request Id
     private int opaque = requestId.getAndIncrement();
     private int flag = 0;
     private String remark;
@@ -113,7 +119,10 @@ public class RemotingCommand {
     public static RemotingCommand createResponseCommand(int code, String remark,
         Class<? extends CommandCustomHeader> classHeader) {
         RemotingCommand cmd = new RemotingCommand();
+
+        // 设置CMD的消息方式是Response
         cmd.markResponseType();
+
         cmd.setCode(code);
         cmd.setRemark(remark);
         setCmdVersion(cmd);
@@ -218,7 +227,15 @@ public class RemotingCommand {
         return result;
     }
 
+    public static void main(String[] args) {
+        int bits = 1 << RPC_TYPE;
+        int flag = 0;
+        flag |= bits;
+        System.out.println(flag);
+    }
+
     public void markResponseType() {
+        // 1<<0 = 1
         int bits = 1 << RPC_TYPE;
         this.flag |= bits;
     }
@@ -368,6 +385,15 @@ public class RemotingCommand {
         }
     }
 
+    /**
+     * Rocket编码的时候，缓存了反射需要的信息
+     *
+     * 事件处理器，将Request会转换成对应处理器需要的Header
+     *
+     * final RegisterBrokerRequestHeader requestHeader =
+     *             (RegisterBrokerRequestHeader) request.decodeCommandCustomHeader(RegisterBrokerRequestHeader.class);
+     *
+     */
     public void makeCustomHeaderToNet() {
         if (this.customHeader != null) {
             Field[] fields = getClazzFields(customHeader.getClass());
@@ -400,6 +426,7 @@ public class RemotingCommand {
         return encodeHeader(this.body != null ? this.body.length : 0);
     }
 
+    // 编码
     public ByteBuffer encodeHeader(final int bodyLength) {
         // 1> header length size
         int length = 4;

@@ -41,6 +41,12 @@ import org.apache.rocketmq.srvutil.ServerUtil;
 import org.apache.rocketmq.srvutil.ShutdownHookThread;
 import org.slf4j.LoggerFactory;
 
+/**
+ * RocketMQ 高吞吐，低延迟，亿级消息积压，顺序消息，事务消息
+ * 顺序写，索引读，零拷贝，pageCache,各种异步化，多线程，netty，集群，负载均衡
+ * 落盘要快， 异步落盘+ 顺序写
+ * 读盘要快， 读索引 + 在内存中读
+ */
 public class NamesrvStartup {
 
     private static InternalLogger log;

@@ -471,6 +471,18 @@ public class MessageDecoder {
         return map;
     }
 
+    /**
+     * 总长度 4个字节
+     * 魔数 4个字节
+     * bodyCRC 4个字节
+     * Flag 4个字节
+     * body长度 4字节
+     * body N字节
+     * 属性长度 2字节
+     * 扩展属性 N字节
+     * @param message
+     * @return
+     */
     public static byte[] encodeMessage(Message message) {
         //only need flag, body, properties
         byte[] body = message.getBody();
@@ -546,13 +558,16 @@ public class MessageDecoder {
         //TO DO refactor, accumulate in one buffer, avoid copies
         List<byte[]> encodedMessages = new ArrayList<byte[]>(messages.size());
         int allSize = 0;
+
         for (Message message : messages) {
             byte[] tmp = encodeMessage(message);
             encodedMessages.add(tmp);
             allSize += tmp.length;
         }
+
         byte[] allBytes = new byte[allSize];
         int pos = 0;
+
         for (byte[] bytes : encodedMessages) {
             System.arraycopy(bytes, 0, allBytes, pos, bytes.length);
             pos += bytes.length;

@@ -16,6 +16,7 @@
  */
 package org.apache.rocketmq.common.message;
 
+import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.Calendar;
 import java.util.Date;
@@ -37,6 +38,7 @@ public class MessageClientIDSetter {
         } catch (Exception e) {
             ip = createFakeIP();
         }
+        // 16
         LEN = ip.length + 2 + 4 + 4 + 2;
         ByteBuffer tempBuffer = ByteBuffer.allocate(ip.length + 2 + 4);
         tempBuffer.put(ip);
@@ -45,6 +47,13 @@ public class MessageClientIDSetter {
         FIX_STRING = UtilAll.bytes2string(tempBuffer.array());
         setStartTime(System.currentTimeMillis());
         COUNTER = new AtomicInteger(0);
+    }
+
+    public static void main(String[] args) throws UnsupportedEncodingException {
+        System.out.println(LEN);
+        System.out.println(FIX_STRING);
+        byte[] ipBytes = UtilAll.getIP();
+        System.out.println(new String(ipBytes, "UTF-8"));
     }
 
     private synchronized static void setStartTime(long millis) {

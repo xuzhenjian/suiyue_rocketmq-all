@@ -79,6 +79,8 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
     @Override
     public void asyncProcessRequest(ChannelHandlerContext ctx, RemotingCommand request, RemotingResponseCallback responseCallback) throws Exception {
+
+        // 异步执行请求，然后执行回调
         asyncProcessRequest(ctx, request).thenAcceptAsync(responseCallback::callback, this.brokerController.getSendMessageExecutor());
     }
 
@@ -86,15 +88,22 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                                                                   RemotingCommand request) throws RemotingCommandException {
         final SendMessageContext mqtraceContext;
         switch (request.getCode()) {
+
             case RequestCode.CONSUMER_SEND_MSG_BACK:
                 return this.asyncConsumerSendMsgBack(ctx, request);
             default:
                 SendMessageRequestHeader requestHeader = parseRequestHeader(request);
+
                 if (requestHeader == null) {
                     return CompletableFuture.completedFuture(null);
                 }
+
+                // 消息上下文
                 mqtraceContext = buildMsgContext(ctx, requestHeader);
+
+                // 发送消息钩子，传递SendMessageContext
                 this.executeSendMessageHookBefore(ctx, request, mqtraceContext);
+
                 if (requestHeader.isBatch()) {
                     return this.asyncSendBatchMessage(ctx, request, mqtraceContext, requestHeader);
                 } else {
@@ -263,9 +272,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         final byte[] body = request.getBody();
 
+        // 如果队列不合法，重新选择队列
         int queueIdInt = requestHeader.getQueueId();
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
-
         if (queueIdInt < 0) {
             queueIdInt = randomQueueId(topicConfig.getWriteQueueNums());
         }
@@ -274,6 +283,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setTopic(requestHeader.getTopic());
         msgInner.setQueueId(queueIdInt);
 
+        // 消息延迟队列主题处理
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
             return CompletableFuture.completedFuture(response);
         }
@@ -288,6 +298,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setReconsumeTimes(requestHeader.getReconsumeTimes() == null ? 0 : requestHeader.getReconsumeTimes());
         String clusterName = this.brokerController.getBrokerConfig().getBrokerClusterName();
         MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_CLUSTER, clusterName);
+
         if (origProps.containsKey(MessageConst.PROPERTY_WAIT_STORE_MSG_OK)) {
             // There is no need to store "WAIT=true", remove it from propertiesString to save 9 bytes for each message.
             // It works for most case. In some cases msgInner.setPropertiesString invoked later and replace it.
@@ -301,6 +312,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         CompletableFuture<PutMessageResult> putMessageResult = null;
         String transFlag = origProps.get(MessageConst.PROPERTY_TRANSACTION_PREPARED);
+
         if (transFlag != null && Boolean.parseBoolean(transFlag)) {
             if (this.brokerController.getBrokerConfig().isRejectTransactionMessage()) {
                 response.setCode(ResponseCode.NO_PERMISSION);
@@ -311,6 +323,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             }
             putMessageResult = this.brokerController.getTransactionalMessageService().asyncPrepareMessage(msgInner);
         } else {
+            // 如果不是事务消息，调用DefaultMessageStore#putMessage进行消息存储
             putMessageResult = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
         }
         return handlePutMessageResultFuture(putMessageResult, response, request, msgInner, responseHeader, mqtraceContext, ctx, queueIdInt);
@@ -329,6 +342,15 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         );
     }
 
+    /**
+     * 如果消息重试次数超过允许的最大重试次数，消息将进入DLD延迟队列，延迟队列TOPIC: %DLQ%+消息组名
+     * @param requestHeader
+     * @param response
+     * @param request
+     * @param msg
+     * @param topicConfig
+     * @return
+     */
     private boolean handleRetryAndDLQ(SendMessageRequestHeader requestHeader, RemotingCommand response,
                                       RemotingCommand request,
                                       MessageExt msg, TopicConfig topicConfig) {
@@ -681,7 +703,11 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         response.setCode(-1);
+
+        // 消息检查
         super.msgCheck(ctx, requestHeader, response);
+
+
         if (response.getCode() != -1) {
             return response;
         }

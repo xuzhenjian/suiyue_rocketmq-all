@@ -95,6 +95,15 @@ public class UtilAll {
         return nf.format(offset);
     }
 
+    /**
+     * UtilAll
+     * @param args
+     */
+    public static void main(String[] args) {
+        // 00000000000019960628
+        System.out.println(offset2FileName(19960628));
+    }
+
     public static long computeElapsedTimeMilliseconds(final long beginTime) {
         return System.currentTimeMillis() - beginTime;
     }

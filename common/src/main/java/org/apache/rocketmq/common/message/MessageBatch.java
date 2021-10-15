@@ -39,6 +39,14 @@ public class MessageBatch extends Message implements Iterable<Message> {
         return messages.iterator();
     }
 
+    /**
+     * 将Messages转换成MessageBatch
+     *
+     * 批量发送消息，不支持DelayLevel, Retry
+     * 验证集合的Messages的TOPIC, isWaitStoreMsgOK属性是否一致
+     * @param messages
+     * @return
+     */
     public static MessageBatch generateFromList(Collection<Message> messages) {
         assert messages != null;
         assert messages.size() > 0;

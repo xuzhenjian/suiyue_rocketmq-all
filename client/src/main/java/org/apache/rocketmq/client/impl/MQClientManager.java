@@ -44,6 +44,13 @@ public class MQClientManager {
         return getOrCreateMQClientInstance(clientConfig, null);
     }
 
+    /**
+     * 创建MQClientInstance实例
+     * 整个JVM实例中只存在一个MQClientManager实例，维护一个MQClientInstance缓存表
+     * @param clientConfig
+     * @param rpcHook
+     * @return
+     */
     public MQClientInstance getOrCreateMQClientInstance(final ClientConfig clientConfig, RPCHook rpcHook) {
         String clientId = clientConfig.buildMQClientId();
         MQClientInstance instance = this.factoryTable.get(clientId);

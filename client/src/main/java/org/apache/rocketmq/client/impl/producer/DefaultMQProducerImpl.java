@@ -100,8 +100,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     private final InternalLogger log = ClientLogger.getLog();
     private final Random random = new Random();
     private final DefaultMQProducer defaultMQProducer;
-    private final ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable =
-        new ConcurrentHashMap<String, TopicPublishInfo>();
+
+    private final ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable = new ConcurrentHashMap<String, TopicPublishInfo>();
+
     private final ArrayList<SendMessageHook> sendMessageHookList = new ArrayList<SendMessageHook>();
     private final ArrayList<EndTransactionHook> endTransactionHookList = new ArrayList<EndTransactionHook>();
     private final RPCHook rpcHook;
@@ -201,7 +202,9 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
                 this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
 
+                // 向MQClientInstance注册，将当前生产者加入到管理中 ConcurrentMap<String/* group */, MQProducerInner> producerTable
                 boolean registerOK = mQClientFactory.registerProducer(this.defaultMQProducer.getProducerGroup(), this);
+
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;
                     throw new MQClientException("The producer group[" + this.defaultMQProducer.getProducerGroup()
@@ -230,8 +233,10 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 break;
         }
 
+        // 向Broker发心跳
         this.mQClientFactory.sendHeartbeatToAllBrokerWithLock();
 
+        // 回调超时Future
         this.startScheduledTask();
 
     }
@@ -552,6 +557,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         return this.mqFaultStrategy.selectOneMessageQueue(tpInfo, lastBrokerName);
     }
 
+    // 使用本次消息发送延迟时间来计算Broker故障规避时长
     public void updateFaultItem(final String brokerName, final long currentLatency, boolean isolation) {
         this.mqFaultStrategy.updateFaultItem(brokerName, currentLatency, isolation);
     }
@@ -572,12 +578,20 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         final long timeout
     ) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         this.makeSureStateOK();
+
         Validators.checkMessage(msg, this.defaultMQProducer);
+
         final long invokeID = random.nextLong();
+
         long beginTimestampFirst = System.currentTimeMillis();
         long beginTimestampPrev = beginTimestampFirst;
+
         long endTimestamp = beginTimestampFirst;
+
+        // 消息发送之前，首先需要获取主题的路由信息，只有获取了这些消息，我们才知道消息要发送到具体的Broker节点
         TopicPublishInfo topicPublishInfo = this.tryToFindTopicPublishInfo(msg.getTopic());
+
+
         if (topicPublishInfo != null && topicPublishInfo.ok()) {
             boolean callTimeout = false;
             MessageQueue mq = null;
@@ -586,9 +600,14 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             int timesTotal = communicationMode == CommunicationMode.SYNC ? 1 + this.defaultMQProducer.getRetryTimesWhenSendFailed() : 1;
             int times = 0;
             String[] brokersSent = new String[timesTotal];
+
+            // 这里是重试机制
             for (; times < timesTotal; times++) {
                 String lastBrokerName = null == mq ? null : mq.getBrokerName();
+
+                // 获取合适的messageQueue
                 MessageQueue mqSelected = this.selectOneMessageQueue(topicPublishInfo, lastBrokerName);
+
                 if (mqSelected != null) {
                     mq = mqSelected;
                     brokersSent[times] = mq.getBrokerName();
@@ -598,15 +617,21 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                             //Reset topic with namespace during resend.
                             msg.setTopic(this.defaultMQProducer.withNamespace(msg.getTopic()));
                         }
+
                         long costTime = beginTimestampPrev - beginTimestampFirst;
+
                         if (timeout < costTime) {
                             callTimeout = true;
                             break;
                         }
 
+
                         sendResult = this.sendKernelImpl(msg, mq, communicationMode, sendCallback, topicPublishInfo, timeout - costTime);
+
                         endTimestamp = System.currentTimeMillis();
+
                         this.updateFaultItem(mq.getBrokerName(), endTimestamp - beginTimestampPrev, false);
+
                         switch (communicationMode) {
                             case ASYNC:
                                 return null;
@@ -705,18 +730,34 @@ public class DefaultMQProducerImpl implements MQProducerInner {
 
         validateNameServerSetting();
 
+        // 如果没有找到相关的主题信息，路由信息，则抛出MQClientException
         throw new MQClientException("No route info of this topic: " + msg.getTopic() + FAQUrl.suggestTodo(FAQUrl.NO_TOPIC_ROUTE_INFO),
             null).setResponseCode(ClientErrorCode.NOT_FOUND_TOPIC_EXCEPTION);
     }
 
+    /**
+     * 查找主题的路由信息方法
+     *
+     * 第一次发送消息时，本地没有缓存topic的路由信息，查询NameServer尝试获取
+     * 如果路由信息未找到，就用默认的topic key TopicValidator.AUTO_CREATE_TOPIC_KEY_TOPIC
+     * @param topic
+     * @return
+     */
     private TopicPublishInfo tryToFindTopicPublishInfo(final String topic) {
         TopicPublishInfo topicPublishInfo = this.topicPublishInfoTable.get(topic);
+
+        /**
+         * 如果没有缓存或没有包含消息队列，则向NameServer查询该topic的路由信息
+         */
         if (null == topicPublishInfo || !topicPublishInfo.ok()) {
             this.topicPublishInfoTable.putIfAbsent(topic, new TopicPublishInfo());
             this.mQClientFactory.updateTopicRouteInfoFromNameServer(topic);
             topicPublishInfo = this.topicPublishInfoTable.get(topic);
         }
 
+        /**
+         * 如果生产者中缓存了topic路由信息，该路由信息中包含了消息队列，则直接返回路由信息
+         */
         if (topicPublishInfo.isHaveTopicRouterInfo() || topicPublishInfo.ok()) {
             return topicPublishInfo;
         } else {
@@ -733,13 +774,21 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         final TopicPublishInfo topicPublishInfo,
         final long timeout) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
         long beginStartTime = System.currentTimeMillis();
+
+        /**
+         * 根据MessageQueue的BrokerName获取Broker的网络地址
+         * 如果MQClientInstance的brokerAddrTable未缓存该Broker的信息，则从NameServer主动更新一下路由
+         */
         String brokerAddr = this.mQClientFactory.findBrokerAddressInPublish(mq.getBrokerName());
+
+
         if (null == brokerAddr) {
             tryToFindTopicPublishInfo(mq.getTopic());
             brokerAddr = this.mQClientFactory.findBrokerAddressInPublish(mq.getBrokerName());
         }
 
         SendMessageContext context = null;
+
         if (brokerAddr != null) {
             brokerAddr = MixAll.brokerVIPChannel(this.defaultMQProducer.isSendMessageWithVIPChannel(), brokerAddr);
 
@@ -751,11 +800,15 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 }
 
                 boolean topicWithNamespace = false;
+
                 if (null != this.mQClientFactory.getClientConfig().getNamespace()) {
                     msg.setInstanceId(this.mQClientFactory.getClientConfig().getNamespace());
                     topicWithNamespace = true;
                 }
 
+                /**
+                 * 如果消息体默认为4K，会对消息体采用ZIP压缩，并设置消息的系统标记为MessageSysFlag.COMPRESSED_FLAG
+                 */
                 int sysFlag = 0;
                 boolean msgBodyCompressed = false;
                 if (this.tryToCompressMessage(msg)) {
@@ -763,11 +816,15 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     msgBodyCompressed = true;
                 }
 
+                /**
+                 * 如果是事务Prepared消息，则设置消息的系统标记为MessageSysFlag.TRANSACTION_PREPARED_TYPE
+                 */
                 final String tranMsg = msg.getProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED);
                 if (tranMsg != null && Boolean.parseBoolean(tranMsg)) {
                     sysFlag |= MessageSysFlag.TRANSACTION_PREPARED_TYPE;
                 }
 
+                // 执行禁发钩子
                 if (hasCheckForbiddenHook()) {
                     CheckForbiddenContext checkForbiddenContext = new CheckForbiddenContext();
                     checkForbiddenContext.setNameSrvAddr(this.defaultMQProducer.getNamesrvAddr());
@@ -780,6 +837,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     this.executeCheckForbiddenHook(checkForbiddenContext);
                 }
 
+                // 执行消息发送钩子，完成发送之前的增强
                 if (this.hasSendMessageHook()) {
                     context = new SendMessageContext();
                     context.setProducer(this);
@@ -801,33 +859,69 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                     this.executeSendMessageHookBefore(context);
                 }
 
+                /**
+                 * 构建消息发送请求包，主要包含以下重要信息
+                 */
                 SendMessageRequestHeader requestHeader = new SendMessageRequestHeader();
+                // 生产者组
                 requestHeader.setProducerGroup(this.defaultMQProducer.getProducerGroup());
+                // 主题名称
                 requestHeader.setTopic(msg.getTopic());
+
+                // 默认创建主题key
                 requestHeader.setDefaultTopic(this.defaultMQProducer.getCreateTopicKey());
+
+                // 默认主题的队列数
                 requestHeader.setDefaultTopicQueueNums(this.defaultMQProducer.getDefaultTopicQueueNums());
+
+                // 队列ID(队列序号)
                 requestHeader.setQueueId(mq.getQueueId());
+
+                // 消息系统标识(MessageSysFlag)
                 requestHeader.setSysFlag(sysFlag);
+
+                // 消息发送时间
                 requestHeader.setBornTimestamp(System.currentTimeMillis());
+
+                // 消息标记(RocketMQ对消息中的flag不做任何处理，供应用程序使用)
                 requestHeader.setFlag(msg.getFlag());
+
+                /**
+                 * 消息扩展属性
+                 * tag: 消息TAG, 用于消息过滤
+                 * key: Message索引键，多个空格隔开，RocketMQ可以根据KEY快速检索到消息
+                 * waitStoreMsgOK: 消息发送时是否等消息存储完成后再返回
+                 * delayTimeLevel: 消息延迟级别，用于定时消息或消息重试
+                 */
                 requestHeader.setProperties(MessageDecoder.messageProperties2String(msg.getProperties()));
+
+                // 消息重试次数
                 requestHeader.setReconsumeTimes(0);
+
                 requestHeader.setUnitMode(this.isUnitMode());
+
+                // 是否是批量消息
                 requestHeader.setBatch(msg instanceof MessageBatch);
+
                 if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                     String reconsumeTimes = MessageAccessor.getReconsumeTime(msg);
+
                     if (reconsumeTimes != null) {
                         requestHeader.setReconsumeTimes(Integer.valueOf(reconsumeTimes));
                         MessageAccessor.clearProperty(msg, MessageConst.PROPERTY_RECONSUME_TIME);
                     }
 
                     String maxReconsumeTimes = MessageAccessor.getMaxReconsumeTimes(msg);
+
                     if (maxReconsumeTimes != null) {
                         requestHeader.setMaxReconsumeTimes(Integer.valueOf(maxReconsumeTimes));
                         MessageAccessor.clearProperty(msg, MessageConst.PROPERTY_MAX_RECONSUME_TIMES);
                     }
                 }
 
+                /**
+                 * 根据消息发送方式，同步，异步，单向方式进行网络传输
+                 */
                 SendResult sendResult = null;
                 switch (communicationMode) {
                     case ASYNC:
@@ -1405,6 +1499,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         final String correlationId = msg.getProperty(MessageConst.PROPERTY_CORRELATION_ID);
 
         try {
+            // Future阻塞方式
             final RequestResponseFuture requestResponseFuture = new RequestResponseFuture(correlationId, timeout, null);
             RequestFutureTable.getRequestFutureTable().put(correlationId, requestResponseFuture);
 

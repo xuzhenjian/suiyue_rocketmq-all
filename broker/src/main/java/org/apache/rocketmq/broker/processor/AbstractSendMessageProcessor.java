@@ -62,6 +62,7 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
     protected final BrokerController brokerController;
     protected final Random random = new Random(System.currentTimeMillis());
     protected final SocketAddress storeHost;
+
     private List<SendMessageHook> sendMessageHookList;
 
     public AbstractSendMessageProcessor(final BrokerController brokerController) {
@@ -71,6 +72,12 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
                 .getNettyServerConfig().getListenPort());
     }
 
+    /**
+     * 组装发送消息的上下文
+     * @param ctx
+     * @param requestHeader
+     * @return
+     */
     protected SendMessageContext buildMsgContext(ChannelHandlerContext ctx,
         SendMessageRequestHeader requestHeader) {
         if (!this.hasSendMessageHook()) {
@@ -164,8 +171,17 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
         return response;
     }
 
+    /**
+     * 消息检查
+     * @param ctx
+     * @param requestHeader
+     * @param response
+     * @return
+     */
     protected RemotingCommand msgCheck(final ChannelHandlerContext ctx,
         final SendMessageRequestHeader requestHeader, final RemotingCommand response) {
+
+        // 检查Broker的权限
         if (!PermName.isWriteable(this.brokerController.getBrokerConfig().getBrokerPermission())
             && this.brokerController.getTopicConfigManager().isOrderTopic(requestHeader.getTopic())) {
             response.setCode(ResponseCode.NO_PERMISSION);
@@ -174,15 +190,19 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
             return response;
         }
 
+        // 检查TOPIC
         if (!TopicValidator.validateTopic(requestHeader.getTopic(), response)) {
             return response;
         }
+
+        // 检查TOPIC是否允许发送消息
         if (TopicValidator.isNotAllowedSendTopic(requestHeader.getTopic(), response)) {
             return response;
         }
 
         TopicConfig topicConfig =
             this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
+
         if (null == topicConfig) {
             int topicSysFlag = 0;
             if (requestHeader.isUnitMode()) {
@@ -194,6 +214,8 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
             }
 
             log.warn("the topic {} not exist, producer: {}", requestHeader.getTopic(), ctx.channel().remoteAddress());
+
+            // 如果TOPIC不存在, 调用BrokerOuterApi.registerBrokerAll创建TOPIC
             topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageMethod(
                 requestHeader.getTopic(),
                 requestHeader.getDefaultTopic(),
@@ -201,6 +223,7 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
                 requestHeader.getDefaultTopicQueueNums(), topicSysFlag);
 
             if (null == topicConfig) {
+                // 如果TOPIC是RETRY，那么重试再创建
                 if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                     topicConfig =
                         this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(
@@ -217,8 +240,11 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
             }
         }
 
+
         int queueIdInt = requestHeader.getQueueId();
         int idValid = Math.max(topicConfig.getWriteQueueNums(), topicConfig.getReadQueueNums());
+
+        // 如果消息队列ID 大于 TOPIC配置的最大值，则非法
         if (queueIdInt >= idValid) {
             String errorInfo = String.format("request queueId[%d] is illegal, %s Producer: %s",
                 queueIdInt,

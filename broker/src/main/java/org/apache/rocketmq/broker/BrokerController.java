@@ -111,15 +111,23 @@ public class BrokerController {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final InternalLogger LOG_PROTECTION = InternalLoggerFactory.getLogger(LoggerName.PROTECTION_LOGGER_NAME);
     private static final InternalLogger LOG_WATER_MARK = InternalLoggerFactory.getLogger(LoggerName.WATER_MARK_LOGGER_NAME);
+
     private final BrokerConfig brokerConfig;
+
     private final NettyServerConfig nettyServerConfig;
     private final NettyClientConfig nettyClientConfig;
+
     private final MessageStoreConfig messageStoreConfig;
+
+
     private final ConsumerOffsetManager consumerOffsetManager;
     private final ConsumerManager consumerManager;
     private final ConsumerFilterManager consumerFilterManager;
     private final ProducerManager producerManager;
+
+    // Netty事件监听服务
     private final ClientHousekeepingService clientHousekeepingService;
+
     private final PullMessageProcessor pullMessageProcessor;
     private final PullRequestHoldService pullRequestHoldService;
     private final MessageArrivingListener messageArrivingListener;
@@ -131,14 +139,7 @@ public class BrokerController {
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(
         "BrokerControllerScheduledThread"));
     private final SlaveSynchronize slaveSynchronize;
-    private final BlockingQueue<Runnable> sendThreadPoolQueue;
-    private final BlockingQueue<Runnable> pullThreadPoolQueue;
-    private final BlockingQueue<Runnable> replyThreadPoolQueue;
-    private final BlockingQueue<Runnable> queryThreadPoolQueue;
-    private final BlockingQueue<Runnable> clientManagerThreadPoolQueue;
-    private final BlockingQueue<Runnable> heartbeatThreadPoolQueue;
-    private final BlockingQueue<Runnable> consumerManagerThreadPoolQueue;
-    private final BlockingQueue<Runnable> endTransactionThreadPoolQueue;
+
     private final FilterServerManager filterServerManager;
     private final BrokerStatsManager brokerStatsManager;
     private final List<SendMessageHook> sendMessageHookList = new ArrayList<SendMessageHook>();
@@ -147,6 +148,11 @@ public class BrokerController {
     private RemotingServer remotingServer;
     private RemotingServer fastRemotingServer;
     private TopicConfigManager topicConfigManager;
+
+
+    /**
+     * 各种线程池
+     */
     private ExecutorService sendMessageExecutor;
     private ExecutorService pullMessageExecutor;
     private ExecutorService replyMessageExecutor;
@@ -156,6 +162,27 @@ public class BrokerController {
     private ExecutorService heartbeatExecutor;
     private ExecutorService consumerManageExecutor;
     private ExecutorService endTransactionExecutor;
+
+    /**
+     *     sendThreadPoolQueueCapacity = 10000;
+     *     pullThreadPoolQueueCapacity = 100000;
+     *     replyThreadPoolQueueCapacity = 10000;
+     *     queryThreadPoolQueueCapacity = 20000;
+     *     clientManagerThreadPoolQueueCapacity = 1000000;
+     *     consumerManagerThreadPoolQueueCapacity = 1000000;
+     *     heartbeatThreadPoolQueueCapacity = 50000;
+     *     endTransactionPoolQueueCapacity = 100000;
+     */
+    private final BlockingQueue<Runnable> sendThreadPoolQueue;
+    private final BlockingQueue<Runnable> pullThreadPoolQueue;
+    private final BlockingQueue<Runnable> replyThreadPoolQueue;
+    private final BlockingQueue<Runnable> queryThreadPoolQueue;
+    private final BlockingQueue<Runnable> clientManagerThreadPoolQueue;
+    private final BlockingQueue<Runnable> heartbeatThreadPoolQueue;
+    private final BlockingQueue<Runnable> consumerManagerThreadPoolQueue;
+    private final BlockingQueue<Runnable> endTransactionThreadPoolQueue;
+
+
     private boolean updateMasterHAServerAddrPeriodically = false;
     private BrokerStats brokerStats;
     private InetSocketAddress storeHost;
@@ -179,6 +206,7 @@ public class BrokerController {
         this.nettyClientConfig = nettyClientConfig;
         this.messageStoreConfig = messageStoreConfig;
         this.consumerOffsetManager = new ConsumerOffsetManager(this);
+        // 创建TopicConfigManager
         this.topicConfigManager = new TopicConfigManager(this);
         this.pullMessageProcessor = new PullMessageProcessor(this);
         this.pullRequestHoldService = new PullRequestHoldService(this);
@@ -190,7 +218,12 @@ public class BrokerController {
         this.clientHousekeepingService = new ClientHousekeepingService(this);
         this.broker2Client = new Broker2Client(this);
         this.subscriptionGroupManager = new SubscriptionGroupManager(this);
+
+
+        // 初始化Netty客户端，用于Broker调用NameServer的接口
         this.brokerOuterAPI = new BrokerOuterAPI(nettyClientConfig);
+
+
         this.filterServerManager = new FilterServerManager(this);
 
         this.slaveSynchronize = new SlaveSynchronize(this);
@@ -261,10 +294,18 @@ public class BrokerController {
         result = result && this.messageStore.load();
 
         if (result) {
+
+            /**
+             * 其实就是多监听一个端口用于接受处理消息，因为默认端口通道可能很多在用，为了防止某些很重要的业务堵塞，就再开一个端口处理。
+             * 这对于老版本的 RocketMQ 有消息接收队列的时候，作用可能大一点，对于目前的 RocketMQ 的设计，作用没那么大了。
+             * 所以，这个默认就不开启了，留着只是为了兼容老版本
+             *
+             */
             this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.clientHousekeepingService);
             NettyServerConfig fastConfig = (NettyServerConfig) this.nettyServerConfig.clone();
             fastConfig.setListenPort(nettyServerConfig.getListenPort() - 2);
             this.fastRemotingServer = new NettyRemotingServer(fastConfig, this.clientHousekeepingService);
+
             this.sendMessageExecutor = new BrokerFixedThreadPoolExecutor(
                 this.brokerConfig.getSendMessageThreadPoolNums(),
                 this.brokerConfig.getSendMessageThreadPoolNums(),
@@ -591,10 +632,12 @@ public class BrokerController {
          */
         ClientManageProcessor clientProcessor = new ClientManageProcessor(this);
         this.remotingServer.registerProcessor(RequestCode.HEART_BEAT, clientProcessor, this.heartbeatExecutor);
+
         this.remotingServer.registerProcessor(RequestCode.UNREGISTER_CLIENT, clientProcessor, this.clientManageExecutor);
         this.remotingServer.registerProcessor(RequestCode.CHECK_CLIENT_CONFIG, clientProcessor, this.clientManageExecutor);
 
         this.fastRemotingServer.registerProcessor(RequestCode.HEART_BEAT, clientProcessor, this.heartbeatExecutor);
+
         this.fastRemotingServer.registerProcessor(RequestCode.UNREGISTER_CLIENT, clientProcessor, this.clientManageExecutor);
         this.fastRemotingServer.registerProcessor(RequestCode.CHECK_CLIENT_CONFIG, clientProcessor, this.clientManageExecutor);
 
@@ -887,6 +930,11 @@ public class BrokerController {
             this.registerBrokerAll(true, false, true);
         }
 
+        /**
+         * 路由注册
+         * RocketMQ路由注册是通过Broker与NameServer的心跳功能实现的
+         * Broker启动时向集群所有的NameServer发送心跳服务，每隔30s向集群中的所有NameServer发送心跳包
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -954,6 +1002,7 @@ public class BrokerController {
 
     private void doRegisterBrokerAll(boolean checkOrderConfig, boolean oneway,
         TopicConfigSerializeWrapper topicConfigWrapper) {
+
         List<RegisterBrokerResult> registerBrokerResultList = this.brokerOuterAPI.registerBrokerAll(
             this.brokerConfig.getBrokerClusterName(),
             this.getBrokerAddr(),
@@ -978,6 +1027,7 @@ public class BrokerController {
                 if (checkOrderConfig) {
                     this.getTopicConfigManager().updateOrderTopicConfig(registerBrokerResult.getKvTable());
                 }
+
             }
         }
     }

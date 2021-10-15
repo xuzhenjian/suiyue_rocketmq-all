@@ -72,12 +72,16 @@ public abstract class NettyRemotingAbstract {
     /**
      * This map caches all on-going requests.
      */
-    protected final ConcurrentMap<Integer /* opaque */, ResponseFuture> responseTable =
-        new ConcurrentHashMap<Integer, ResponseFuture>(256);
+    // 维护所有正在进行的request, 以ResponseFuture的形式
+    protected final ConcurrentMap<Integer /* opaque */, ResponseFuture> responseTable = new ConcurrentHashMap<Integer, ResponseFuture>(256);
 
     /**
      * This container holds all processors per request code, aka, for each incoming request, we may look up the
      * responding processor in this map to handle the request.
+     */
+
+    /**
+     * 不同的请求，分配不同的处理器和线程池
      */
     protected final HashMap<Integer/* request code */, Pair<NettyRequestProcessor, ExecutorService>> processorTable =
         new HashMap<Integer, Pair<NettyRequestProcessor, ExecutorService>>(64);
@@ -425,11 +429,13 @@ public abstract class NettyRemotingAbstract {
 
                     responseTable.remove(opaque);
                     responseFuture.setCause(f.cause());
+
                     responseFuture.putResponse(null);
                     log.warn("send a request command to channel <" + addr + "> failed.");
                 }
             });
 
+            // 阻塞获取执行结果
             RemotingCommand responseCommand = responseFuture.waitResponse(timeoutMillis);
             if (null == responseCommand) {
                 if (responseFuture.isSendRequestOK()) {
@@ -564,6 +570,13 @@ public abstract class NettyRemotingAbstract {
         }
     }
 
+    /**
+     * 简单的订阅发布
+     *
+     * 根据不同的Netty事件，比如IDLE，CLOSE，CONNECT，EXCEPTION
+     * 分配给ProducerManager,ConsumerManager,FilterServerManager
+     *
+     */
     class NettyEventExecutor extends ServiceThread {
         private final LinkedBlockingQueue<NettyEvent> eventQueue = new LinkedBlockingQueue<NettyEvent>();
         private final int maxSize = 10000;

@@ -56,6 +56,9 @@ import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
 import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+/**
+ * 处理Client的事件
+ */
 public class ClientRemotingProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
     private final InternalLogger log = ClientLogger.getLog();
     private final MQClientInstance mqClientFactory;
@@ -83,6 +86,7 @@ public class ClientRemotingProcessor extends AsyncNettyRequestProcessor implemen
             case RequestCode.CONSUME_MESSAGE_DIRECTLY:
                 return this.consumeMessageDirectly(ctx, request);
 
+                // 回复收到的消息，回调RequestResponseFuture
             case RequestCode.PUSH_REPLY_MESSAGE_TO_CLIENT:
                 return this.receiveReplyMessage(ctx, request);
             default:

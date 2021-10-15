@@ -110,6 +110,20 @@ public class BrokerOuterAPI {
         this.remotingClient.updateNameServerAddressList(lst);
     }
 
+    /**
+     * 路由注册
+     * @param clusterName
+     * @param brokerAddr
+     * @param brokerName
+     * @param brokerId
+     * @param haServerAddr
+     * @param topicConfigWrapper
+     * @param filterServerList
+     * @param oneway
+     * @param timeoutMills
+     * @param compressed
+     * @return
+     */
     public List<RegisterBrokerResult> registerBrokerAll(
         final String clusterName,
         final String brokerAddr,
@@ -122,15 +136,23 @@ public class BrokerOuterAPI {
         final int timeoutMills,
         final boolean compressed) {
 
+        // 在写入时写入到副本中，这样可以在并发读时不需要加锁，提高了并发读的效率
+        // nacos维护注册服务。也是这个思想
         final List<RegisterBrokerResult> registerBrokerResultList = new CopyOnWriteArrayList<>();
         List<String> nameServerAddressList = this.remotingClient.getNameServerAddressList();
         if (nameServerAddressList != null && nameServerAddressList.size() > 0) {
 
             final RegisterBrokerRequestHeader requestHeader = new RegisterBrokerRequestHeader();
+
+            // broker地址
             requestHeader.setBrokerAddr(brokerAddr);
+            // brokerId 0:Master 大于0:Slave
             requestHeader.setBrokerId(brokerId);
+            // brokerName
             requestHeader.setBrokerName(brokerName);
+            // 集群名称
             requestHeader.setClusterName(clusterName);
+            // master地址，初次请求时该值为空，slave向NameServer注册返回
             requestHeader.setHaServerAddr(haServerAddr);
             requestHeader.setCompressed(compressed);
 

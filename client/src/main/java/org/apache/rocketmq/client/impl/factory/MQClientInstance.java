@@ -91,19 +91,25 @@ public class MQClientInstance {
     private final int instanceIndex;
     private final String clientId;
     private final long bootTimestamp = System.currentTimeMillis();
+
     private final ConcurrentMap<String/* group */, MQProducerInner> producerTable = new ConcurrentHashMap<String, MQProducerInner>();
     private final ConcurrentMap<String/* group */, MQConsumerInner> consumerTable = new ConcurrentHashMap<String, MQConsumerInner>();
     private final ConcurrentMap<String/* group */, MQAdminExtInner> adminExtTable = new ConcurrentHashMap<String, MQAdminExtInner>();
+
     private final NettyClientConfig nettyClientConfig;
     private final MQClientAPIImpl mQClientAPIImpl;
     private final MQAdminImpl mQAdminImpl;
+
     private final ConcurrentMap<String/* Topic */, TopicRouteData> topicRouteTable = new ConcurrentHashMap<String, TopicRouteData>();
+
     private final Lock lockNamesrv = new ReentrantLock();
     private final Lock lockHeartbeat = new ReentrantLock();
+
     private final ConcurrentMap<String/* Broker Name */, HashMap<Long/* brokerId */, String/* address */>> brokerAddrTable =
         new ConcurrentHashMap<String, HashMap<Long, String>>();
     private final ConcurrentMap<String/* Broker Name */, HashMap<String/* address */, Integer>> brokerVersionTable =
         new ConcurrentHashMap<String, HashMap<String, Integer>>();
+
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
         @Override
         public Thread newThread(Runnable r) {
@@ -111,8 +117,10 @@ public class MQClientInstance {
         }
     });
     private final ClientRemotingProcessor clientRemotingProcessor;
+
     private final PullMessageService pullMessageService;
     private final RebalanceService rebalanceService;
+
     private final DefaultMQProducer defaultMQProducer;
     private final ConsumerStatsManager consumerStatsManager;
     private final AtomicLong sendHeartbeatTimesTotal = new AtomicLong(0);
@@ -126,7 +134,10 @@ public class MQClientInstance {
     public MQClientInstance(ClientConfig clientConfig, int instanceIndex, String clientId, RPCHook rpcHook) {
         this.clientConfig = clientConfig;
         this.instanceIndex = instanceIndex;
+
+        // 初始化Netty Client
         this.nettyClientConfig = new NettyClientConfig();
+
         this.nettyClientConfig.setClientCallbackExecutorThreads(clientConfig.getClientCallbackExecutorThreads());
         this.nettyClientConfig.setUseTLS(clientConfig.isUseTLS());
         this.clientRemotingProcessor = new ClientRemotingProcessor(this);
@@ -157,6 +168,17 @@ public class MQClientInstance {
             MQVersion.getVersionDesc(MQVersion.CURRENT_VERSION), RemotingCommand.getSerializeTypeConfigInThisServer());
     }
 
+    /**
+     * 根据topicRouteData中的List<QueueData> 转换成TopicPublishInfo的List<MessageQueue>
+     *
+     * 循环遍历路由信息的QueueData信息，如果队列没有写权限，继续遍历
+     * 如果queueData中的brokerName找不到brokerData 或者 找不到Master节点，则遍历下一个QueueData
+     *
+     *  根据写队列个数（默认是16个），根据topic+序号创建MessageQueue，填充TopicPublishInfo
+     * @param topic
+     * @param route
+     * @return
+     */
     public static TopicPublishInfo topicRouteData2TopicPublishInfo(final String topic, final TopicRouteData route) {
         TopicPublishInfo info = new TopicPublishInfo();
         info.setTopicRouteData(route);
@@ -174,6 +196,7 @@ public class MQClientInstance {
             info.setOrderTopic(true);
         } else {
             List<QueueData> qds = route.getQueueDatas();
+            // 按照broker排序
             Collections.sort(qds);
             for (QueueData qd : qds) {
                 if (PermName.isWriteable(qd.getPerm())) {
@@ -221,6 +244,12 @@ public class MQClientInstance {
         return mqList;
     }
 
+    /**
+     * MQClientInstance启动
+     *
+     * DefaultMQProducer包含 DefaultMQProducerImpl 包含MQClientInstance
+     * @throws MQClientException
+     */
     public void start() throws MQClientException {
 
         synchronized (this) {
@@ -228,19 +257,32 @@ public class MQClientInstance {
                 case CREATE_JUST:
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
+
+                    // 拉取NameServer地址，并且维护到NettyRemotingClient#AtomicReference<List<String>> namesrvAddrList
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
+
                     // Start request-response channel
+                    // 启动RemotingClient
                     this.mQClientAPIImpl.start();
+
+
                     // Start various schedule tasks
                     this.startScheduledTask();
                     // Start pull service
+
+                    // 拉取消息服务
                     this.pullMessageService.start();
+
+
                     // Start rebalance service
+                    // 消费组里的消费者会分摊队列
                     this.rebalanceService.start();
+
                     // Start push service
                     this.defaultMQProducer.getDefaultMQProducerImpl().start(false);
+
                     log.info("the client factory [{}] start OK", this.clientId);
                     this.serviceState = ServiceState.RUNNING;
                     break;
@@ -253,6 +295,8 @@ public class MQClientInstance {
     }
 
     private void startScheduledTask() {
+
+        // 120s 拉取NameServer
         if (null == this.clientConfig.getNamesrvAddr()) {
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
@@ -267,6 +311,7 @@ public class MQClientInstance {
             }, 1000 * 10, 1000 * 60 * 2, TimeUnit.MILLISECONDS);
         }
 
+        // 每30s向NameServer获取TOPIC信息
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override
@@ -621,6 +666,8 @@ public class MQClientInstance {
                     } else {
                         topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, 1000 * 3);
                     }
+
+                    // 与本地缓存中的路由信息进行比对
                     if (topicRouteData != null) {
                         TopicRouteData old = this.topicRouteTable.get(topic);
                         boolean changed = topicRouteDataIsChange(old, topicRouteData);
@@ -633,9 +680,13 @@ public class MQClientInstance {
                         if (changed) {
                             TopicRouteData cloneTopicRouteData = topicRouteData.cloneTopicRouteData();
 
+                            // 更新MQClientInstance Broker地址缓存表
+                            // ConcurrentMap<String/* Broker Name */, HashMap<Long/* brokerId */, String/* address */>> brokerAddrTable
                             for (BrokerData bd : topicRouteData.getBrokerDatas()) {
                                 this.brokerAddrTable.put(bd.getBrokerName(), bd.getBrokerAddrs());
                             }
+
+                            // 更新该MQClientInstance所管辖的所有消息发送关于topic的路由信息
 
                             // Update Pub info
                             {

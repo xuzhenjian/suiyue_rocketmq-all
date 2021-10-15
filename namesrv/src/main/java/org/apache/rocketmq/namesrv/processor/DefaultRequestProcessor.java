@@ -58,6 +58,9 @@ import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
 import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+/**
+ * 默认的事件处理器
+ */
 public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
     private static InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
 
@@ -88,6 +91,8 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
                 return this.deleteKVConfig(ctx, request);
             case RequestCode.QUERY_DATA_VERSION:
                 return queryBrokerTopicConfig(ctx, request);
+
+                // Broker注册
             case RequestCode.REGISTER_BROKER:
                 Version brokerVersion = MQVersion.value2Version(request.getVersion());
                 if (brokerVersion.ordinal() >= MQVersion.Version.V3_0_11.ordinal()) {
@@ -284,6 +289,8 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         RemotingCommand request) throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(RegisterBrokerResponseHeader.class);
         final RegisterBrokerResponseHeader responseHeader = (RegisterBrokerResponseHeader) response.readCustomHeader();
+
+        // TODO 反射缓存实现在RemotingCommand.makeCustomHeaderToNet();
         final RegisterBrokerRequestHeader requestHeader =
             (RegisterBrokerRequestHeader) request.decodeCommandCustomHeader(RegisterBrokerRequestHeader.class);
 
@@ -340,14 +347,25 @@ public class DefaultRequestProcessor extends AsyncNettyRequestProcessor implemen
         return response;
     }
 
+    /**
+     * 路由发现
+     *
+     * RocketMQ路由发现是非实时，当TOPIC路由出现变化后，NameServer不主动推给客户端，而是由客户端定时拉取主题最新的路由
+     * @param ctx
+     * @param request
+     * @return
+     * @throws RemotingCommandException
+     */
     public RemotingCommand getRouteInfoByTopic(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
         final GetRouteInfoRequestHeader requestHeader =
             (GetRouteInfoRequestHeader) request.decodeCommandCustomHeader(GetRouteInfoRequestHeader.class);
 
+        // 获取Topic路由信息
         TopicRouteData topicRouteData = this.namesrvController.getRouteInfoManager().pickupTopicRouteData(requestHeader.getTopic());
 
+        // 如果找到主题对应的路由信息并且该主题为顺序信息，从NameServerKVConfig中获取关于顺序消息相关的配置信息
         if (topicRouteData != null) {
             if (this.namesrvController.getNamesrvConfig().isOrderMessageEnable()) {
                 String orderTopicConf =

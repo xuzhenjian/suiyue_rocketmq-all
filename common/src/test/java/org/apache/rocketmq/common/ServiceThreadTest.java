@@ -71,6 +71,11 @@ public class ServiceThreadTest {
         testServiceThread.waitForRunning(1000);
         assertEquals(false, testServiceThread.hasNotified.get());
         assertEquals(1, testServiceThread.waitPoint.getCount());
+
+        // repeat waitForRunning again
+        testServiceThread.waitForRunning(1000);
+        assertEquals(false, testServiceThread.hasNotified.get());
+        assertEquals(1, testServiceThread.waitPoint.getCount());
     }
 
     private ServiceThread startTestServiceThread() {

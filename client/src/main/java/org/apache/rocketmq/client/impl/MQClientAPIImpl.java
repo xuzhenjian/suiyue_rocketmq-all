@@ -185,7 +185,10 @@ public class MQClientAPIImpl {
         RPCHook rpcHook, final ClientConfig clientConfig) {
         this.clientConfig = clientConfig;
         topAddressing = new TopAddressing(MixAll.getWSAddr(), clientConfig.getUnitName());
+
+
         this.remotingClient = new NettyRemotingClient(nettyClientConfig, null);
+
         this.clientRemotingProcessor = clientRemotingProcessor;
 
         this.remotingClient.registerRPCHook(rpcHook);
@@ -431,6 +434,27 @@ public class MQClientAPIImpl {
         return sendMessage(addr, brokerName, msg, requestHeader, timeoutMillis, communicationMode, null, null, null, 0, context, producer);
     }
 
+    /**
+     * MQ客户端发送的入口
+     * MQClientAPIImpl#sendMessage
+     *
+     * @param addr
+     * @param brokerName
+     * @param msg
+     * @param requestHeader
+     * @param timeoutMillis
+     * @param communicationMode
+     * @param sendCallback
+     * @param topicPublishInfo
+     * @param instance
+     * @param retryTimesWhenSendFailed
+     * @param context
+     * @param producer
+     * @return
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public SendResult sendMessage(
         final String addr,
         final String brokerName,
@@ -500,8 +524,13 @@ public class MQClientAPIImpl {
         final long timeoutMillis,
         final RemotingCommand request
     ) throws RemotingException, MQBrokerException, InterruptedException {
+
+        // 同步发送消息
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, timeoutMillis);
+
         assert response != null;
+
+        // 处理消息结果
         return this.processSendResponse(brokerName, msg, response,addr);
     }
 
@@ -520,6 +549,7 @@ public class MQClientAPIImpl {
         final DefaultMQProducerImpl producer
     ) throws InterruptedException, RemotingException {
         final long beginStartTime = System.currentTimeMillis();
+
         this.remotingClient.invokeAsync(addr, request, timeoutMillis, new InvokeCallback() {
             @Override
             public void operationComplete(ResponseFuture responseFuture) {
@@ -540,12 +570,19 @@ public class MQClientAPIImpl {
                     return;
                 }
 
+                /**
+                 * 重试的调用入口是收到服务器响应包时进行的，如果出现网络异常，网络超时等将不会重试
+                 * 也就是说 NettyClientHandler处理了Broker的响应结果，执行了processMessageReceived
+                 * NettyRemotingAbstract#executeInvokeCallback, 异步回调
+                 */
                 if (response != null) {
                     try {
                         SendResult sendResult = MQClientAPIImpl.this.processSendResponse(brokerName, msg, response, addr);
                         assert sendResult != null;
                         if (context != null) {
                             context.setSendResult(sendResult);
+
+                            // 消息发送完接收结果 HOOK
                             context.getProducer().executeSendMessageHookAfter(context);
                         }
 
@@ -581,6 +618,22 @@ public class MQClientAPIImpl {
         });
     }
 
+    /**
+     *
+     * @param brokerName
+     * @param msg
+     * @param timeoutMillis
+     * @param request
+     * @param sendCallback
+     * @param topicPublishInfo
+     * @param instance
+     * @param timesTotal 总重试次数
+     * @param curTimes 当前次数计数
+     * @param e
+     * @param context
+     * @param needRetry 需要重试
+     * @param producer
+     */
     private void onExceptionImpl(final String brokerName,
         final Message msg,
         final long timeoutMillis,
@@ -595,7 +648,10 @@ public class MQClientAPIImpl {
         final boolean needRetry,
         final DefaultMQProducerImpl producer
     ) {
+
+        // 重试计数
         int tmp = curTimes.incrementAndGet();
+
         if (needRetry && tmp <= timesTotal) {
             String retryBrokerName = brokerName;//by default, it will send to the same broker
             if (topicPublishInfo != null) { //select one message queue accordingly, in order to determine which broker to send
@@ -607,8 +663,12 @@ public class MQClientAPIImpl {
                 retryBrokerName);
             try {
                 request.setOpaque(RemotingCommand.createNewRequestId());
+
+                // 重新发送消息
                 sendMessageAsync(addr, retryBrokerName, msg, timeoutMillis, request, sendCallback, topicPublishInfo, instance,
                     timesTotal, curTimes, context, producer);
+
+
             } catch (InterruptedException e1) {
                 onExceptionImpl(retryBrokerName, msg, timeoutMillis, request, sendCallback, topicPublishInfo, instance, timesTotal, curTimes, e1,
                     context, false, producer);
@@ -2262,5 +2322,9 @@ public class MQClientAPIImpl {
                 log.error("Failed to resume half message check logic. Remark={}", response.getRemark());
                 return false;
         }
+    }
+
+    public static void main(String[] args) {
+        assert false;
     }
 }

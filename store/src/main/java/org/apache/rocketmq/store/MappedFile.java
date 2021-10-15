@@ -177,6 +177,17 @@ public class MappedFile extends ReferenceResource {
         }
     }
 
+    /**
+     * MMAP
+     * @param args
+     */
+    public static void main(String[] args) throws IOException {
+        MappedFile mappedFile = new MappedFile("D:" + File.separator + "19990329", 1024);
+        System.out.println(MappedFile.getTotalMappedFiles());
+        System.out.println(MappedFile.getTotalMappedVirtualMemory());
+    }
+
+
     public long getLastModifiedTimestamp() {
         return this.file.lastModified();
     }
@@ -199,18 +210,35 @@ public class MappedFile extends ReferenceResource {
         return appendMessagesInner(messageExtBatch, cb, putMessageContext);
     }
 
+    /**
+     * 将消息追加到MappedFile中
+     * @param messageExt
+     * @param cb
+     * @param putMessageContext
+     * @return
+     */
     public AppendMessageResult appendMessagesInner(final MessageExt messageExt, final AppendMessageCallback cb,
             PutMessageContext putMessageContext) {
         assert messageExt != null;
         assert cb != null;
 
+        /**
+         * 首先先获取MappedFile当前写指针，如果currentPos>=文件大小，则表明文件已写满，抛出异常
+         * 如果currentPos小于文件大小，通过slice()创建一个与MappedFile的共享内存区，并设置position为当前指针
+         *
+         * slice(): 从原始ByteBuf中截取一段，这段数据是从readerIndex到writeIndex
+         * 同时返回的新的ByteBuf最大容量maxCapacity为原始ByteBuf的readableBytes()
+         */
         int currentPos = this.wrotePosition.get();
 
         if (currentPos < this.fileSize) {
+
             ByteBuffer byteBuffer = writeBuffer != null ? writeBuffer.slice() : this.mappedByteBuffer.slice();
             byteBuffer.position(currentPos);
+
             AppendMessageResult result;
             if (messageExt instanceof MessageExtBrokerInner) {
+                // 追加消息 DefaultAppendMessageCallback#doAppend
                 result = cb.doAppend(this.getFileFromOffset(), byteBuffer, this.fileSize - currentPos,
                         (MessageExtBrokerInner) messageExt, putMessageContext);
             } else if (messageExt instanceof MessageExtBatch) {
@@ -434,6 +462,15 @@ public class MappedFile extends ReferenceResource {
             return true;
         }
 
+        /**
+         * MMAP 使用时必须实现指定好内存映射的大小，并且一次 map 的大小限制在 1.5G 左右，
+         * 重复 map 又会带来虚拟内存的回收、重新分配的问题，对于文件不确定大小的情形实在是太不友好了。
+         *
+         * MMAP 使用的是虚拟内存，和 PageCache 一样是由操作系统来控制刷盘的，
+         * 虽然可以通过 force () 来手动控制，但这个时间把握不好，在小内存场景下会很令人头疼。
+         *
+         * MMAP 的回收问题，当 MappedByteBuffer 不再需要时，可以手动释放占用的虚拟内存
+         */
         clean(this.mappedByteBuffer);
         TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(this.fileSize * (-1));
         TOTAL_MAPPED_FILES.decrementAndGet();
@@ -569,6 +606,8 @@ public class MappedFile extends ReferenceResource {
         final long beginTime = System.currentTimeMillis();
         final long address = ((DirectBuffer) (this.mappedByteBuffer)).address();
         Pointer pointer = new Pointer(address);
+
+        // 利用com.sun.jna.Library 类库将该批内存锁定，避免被置换到交换区，提高存储性能
         int ret = LibC.INSTANCE.munlock(pointer, new NativeLong(this.fileSize));
         log.info("munlock {} {} {} ret = {} time consuming = {}", address, this.fileName, this.fileSize, ret, System.currentTimeMillis() - beginTime);
     }

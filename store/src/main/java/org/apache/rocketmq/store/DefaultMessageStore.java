@@ -67,30 +67,41 @@ import org.apache.rocketmq.store.stats.BrokerStatsManager;
 public class DefaultMessageStore implements MessageStore {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    // 消息存储配置属性
     private final MessageStoreConfig messageStoreConfig;
-    // CommitLog
+
+    // CommitLog文件的存储实现类
     private final CommitLog commitLog;
 
+    // 消息队列存储缓存表， 按消息主题分组
     private final ConcurrentMap<String/* topic */, ConcurrentMap<Integer/* queueId */, ConsumeQueue>> consumeQueueTable;
 
+    // 消息队列文件ConsumeQueue刷盘线程
     private final FlushConsumeQueueService flushConsumeQueueService;
 
+    // 清除CommitLog文件服务
     private final CleanCommitLogService cleanCommitLogService;
 
+    // 清楚ConsumeQueue文件服务
     private final CleanConsumeQueueService cleanConsumeQueueService;
 
+    // 索引文件实现类
     private final IndexService indexService;
 
+    // MappedFile分配服务
     private final AllocateMappedFileService allocateMappedFileService;
 
+    // CommitLog消息分发，根据CommitLog文件构建ConsumeQueue, IndexFile文件
     private final ReputMessageService reputMessageService;
 
+    // 存储HA机制
     private final HAService haService;
 
     private final ScheduleMessageService scheduleMessageService;
 
     private final StoreStatsService storeStatsService;
 
+    // 消息堆内存缓存
     private final TransientStorePool transientStorePool;
 
     private final RunningFlags runningFlags = new RunningFlags();
@@ -98,16 +109,21 @@ public class DefaultMessageStore implements MessageStore {
 
     private final ScheduledExecutorService scheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("StoreScheduledThread"));
+
     private final BrokerStatsManager brokerStatsManager;
+
+    // 消息拉取长轮询模式，消息达到监听器
     private final MessageArrivingListener messageArrivingListener;
     private final BrokerConfig brokerConfig;
 
     private volatile boolean shutdown = true;
 
+    // 文件刷盘检测点
     private StoreCheckpoint storeCheckpoint;
 
     private AtomicLong printTimes = new AtomicLong(0);
 
+    // CommitLog文件转发请求
     private final LinkedList<CommitLogDispatcher> dispatcherList;
 
     private RandomAccessFile lockFile;
@@ -357,6 +373,11 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     * 如果消息主题长度超过127， 消息属性长度超过2^15 -1,拒绝消息写入
+     * @param msg
+     * @return
+     */
     private PutMessageStatus checkMessage(MessageExtBrokerInner msg) {
         if (msg.getTopic().length() > Byte.MAX_VALUE) {
             log.warn("putMessage message topic length too long " + msg.getTopic().length());
@@ -384,7 +405,19 @@ public class DefaultMessageStore implements MessageStore {
         return PutMessageStatus.PUT_OK;
     }
 
+    /**
+     * 检查存储状态
+     * @return
+     */
     private PutMessageStatus checkStoreStatus() {
+
+        /**
+         * 1. 如果当前Broker停止工作或Broker为SLAVE角色或 当前RocketMQ不支持写入则拒绝消息写入
+         *
+         * 如果日志中包含"message store is not writeable, so putMessage is forbidden"
+         * 出现这种日志最有可能是磁盘空间不足，在写ConsumeQueue, IndexFile文件出现错误时会拒绝消息再次写入
+         *
+         */
         if (this.shutdown) {
             log.warn("message store has shutdown, so putMessage is forbidden");
             return PutMessageStatus.SERVICE_NOT_AVAILABLE;
@@ -417,11 +450,14 @@ public class DefaultMessageStore implements MessageStore {
 
     @Override
     public CompletableFuture<PutMessageResult> asyncPutMessage(MessageExtBrokerInner msg) {
+
+        // 检查存储状态
         PutMessageStatus checkStoreStatus = this.checkStoreStatus();
         if (checkStoreStatus != PutMessageStatus.PUT_OK) {
             return CompletableFuture.completedFuture(new PutMessageResult(checkStoreStatus, null));
         }
 
+        // 检查消息状态
         PutMessageStatus msgCheckStatus = this.checkMessage(msg);
         if (msgCheckStatus == PutMessageStatus.MESSAGE_ILLEGAL) {
             return CompletableFuture.completedFuture(new PutMessageResult(msgCheckStatus, null));
@@ -498,8 +534,7 @@ public class DefaultMessageStore implements MessageStore {
         long begin = this.getCommitLog().getBeginTimeInLock();
         long diff = this.systemClock.now() - begin;
 
-        return diff < 10000000
-            && diff > this.messageStoreConfig.getOsPageCacheBusyTimeOutMills();
+        return diff < 10000000 && diff > this.messageStoreConfig.getOsPageCacheBusyTimeOutMills();
     }
 
     @Override

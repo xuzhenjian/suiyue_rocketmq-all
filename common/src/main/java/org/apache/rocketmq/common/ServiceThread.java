@@ -16,6 +16,7 @@
  */
 package org.apache.rocketmq.common;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.rocketmq.common.constant.LoggerName;
@@ -158,5 +159,29 @@ public abstract class ServiceThread implements Runnable {
 
     public void setDaemon(boolean daemon) {
         isDaemon = daemon;
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        int WATCH_INTERVAL = 500;
+        CountDownLatch2 testLatch = new CountDownLatch2(1);
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                for (;;) {
+                    try {
+                        Long start = System.currentTimeMillis();
+                        testLatch.reset();
+                        testLatch.await(3000, TimeUnit.MILLISECONDS);
+                        Long end = System.currentTimeMillis();
+                        System.out.println("cost:" + (end - start));
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }).start();
+        Thread.sleep(5000);
+        testLatch.countDown();
     }
 }

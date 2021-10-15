@@ -11,7 +11,7 @@
 
   Unless required by applicable law or agreed to in writing, software
   distributed under the License is distributed on an "AS IS" BASIS,
-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND${user.home}, either express or implied.
   See the License for the specific language governing permissions and
   limitations under the License.
   -->
@@ -19,10 +19,10 @@
 <configuration>
     <appender name="DefaultAppender"
               class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>${user.home}/logs/rocketmqlogs/namesrv_default.log</file>
+        <file>D:/logs/rocketmqlogs/namesrv_default.log</file>
         <append>true</append>
         <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
-            <fileNamePattern>${user.home}/logs/rocketmqlogs/otherdays/namesrv_default.%i.log.gz</fileNamePattern>
+            <fileNamePattern>D:/logs/rocketmqlogs/otherdays/namesrv_default.%i.log.gz</fileNamePattern>
             <minIndex>1</minIndex>
             <maxIndex>5</maxIndex>
         </rollingPolicy>
@@ -38,10 +38,10 @@
 
     <appender name="RocketmqNamesrvAppender_inner"
               class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>${user.home}/logs/rocketmqlogs/namesrv.log</file>
+        <file>D:/logs/rocketmqlogs/namesrv.log</file>
         <append>true</append>
         <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
-            <fileNamePattern>${user.home}/logs/rocketmqlogs/otherdays/namesrv.%i.log.gz</fileNamePattern>
+            <fileNamePattern>D:/logs/rocketmqlogs/otherdays/namesrv.%i.log.gz</fileNamePattern>
             <minIndex>1</minIndex>
             <maxIndex>5</maxIndex>
         </rollingPolicy>

@@ -18,7 +18,10 @@ package org.apache.rocketmq.common.constant;
 
 public class PermName {
     public static final int PERM_PRIORITY = 0x1 << 3;
+
+    // 0x1是16进制， 二进制是0001 PERM_READ = 4
     public static final int PERM_READ = 0x1 << 2;
+    // PERM_WRITE = 2
     public static final int PERM_WRITE = 0x1 << 1;
     public static final int PERM_INHERIT = 0x1;
 
@@ -39,15 +42,34 @@ public class PermName {
         return sb.toString();
     }
 
+    /**
+     * 0100
+     * 0100
+     * @param perm
+     * @return
+     */
     public static boolean isReadable(final int perm) {
         return (perm & PERM_READ) == PERM_READ;
     }
 
+    /**
+     * 0010
+     * 0010
+     * @param perm
+     * @return
+     */
     public static boolean isWriteable(final int perm) {
         return (perm & PERM_WRITE) == PERM_WRITE;
     }
 
     public static boolean isInherited(final int perm) {
         return (perm & PERM_INHERIT) == PERM_INHERIT;
+    }
+
+    public static void main(String[] args) {
+        System.out.println(perm2String(PERM_READ | PERM_WRITE));
+        System.out.println(0x1);
+        System.out.println(0x1 << 2);
+        System.out.println(0x1 << 1);
     }
 }

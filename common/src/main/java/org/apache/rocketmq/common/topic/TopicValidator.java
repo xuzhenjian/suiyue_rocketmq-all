@@ -86,6 +86,7 @@ public class TopicValidator {
             return false;
         }
 
+        // TOPIC的长度不能127
         if (topic.length() > TOPIC_MAX_LENGTH) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
             response.setRemark("The specified topic is longer than topic max length.");

@@ -78,6 +78,13 @@ public class Validators {
         return matcher.matches();
     }
 
+    /**
+     * TOPIC格式，权限验证
+     * 消息长度验证，不能超过4M
+     * @param msg
+     * @param defaultMQProducer
+     * @throws MQClientException
+     */
     public static void checkMessage(Message msg, DefaultMQProducer defaultMQProducer)
         throws MQClientException {
         if (null == msg) {

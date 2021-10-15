@@ -84,6 +84,9 @@ public class NamesrvController {
 
         this.registerProcessor();
 
+        /**
+         * NameServer会每隔10s扫描brokerLiveTable状态表
+         */
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
             @Override

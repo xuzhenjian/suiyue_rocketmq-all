@@ -76,12 +76,17 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
     private final NettyClientConfig nettyClientConfig;
     private final Bootstrap bootstrap = new Bootstrap();
     private final EventLoopGroup eventLoopGroupWorker;
+
+    // 关于Channel的锁
     private final Lock lockChannelTables = new ReentrantLock();
+
+    // Channel包装， 获取Channel状态，以及Channel是否可以写入
     private final ConcurrentMap<String /* addr */, ChannelWrapper> channelTables = new ConcurrentHashMap<String, ChannelWrapper>();
 
     private final Timer timer = new Timer("ClientHouseKeepingService", true);
 
     private final AtomicReference<List<String>> namesrvAddrList = new AtomicReference<List<String>>();
+
     private final AtomicReference<String> namesrvAddrChoosed = new AtomicReference<String>();
     private final AtomicInteger namesrvIndex = new AtomicInteger(initValueIndex());
     private final Lock namesrvChannelLock = new ReentrantLock();
@@ -99,6 +104,14 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         this(nettyClientConfig, null);
     }
 
+    /**
+     * Client是没有配置ChannelEventListener
+     *
+     * Broker配置的是ClientHousekeepingService
+     * NameServer配置的是BrokerHousekeepingService
+     * @param nettyClientConfig
+     * @param channelEventListener
+     */
     public NettyRemotingClient(final NettyClientConfig nettyClientConfig,
         final ChannelEventListener channelEventListener) {
         super(nettyClientConfig.getClientOnewaySemaphoreValue(), nettyClientConfig.getClientAsyncSemaphoreValue());
@@ -106,6 +119,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         this.channelEventListener = channelEventListener;
 
         int publicThreadNums = nettyClientConfig.getClientCallbackExecutorThreads();
+
         if (publicThreadNums <= 0) {
             publicThreadNums = 4;
         }
@@ -189,6 +203,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
                 }
             });
 
+        // 每3秒扫描ResponseTable,冲刷超时消息
         this.timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
@@ -366,15 +381,25 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
     public RemotingCommand invokeSync(String addr, final RemotingCommand request, long timeoutMillis)
         throws InterruptedException, RemotingConnectException, RemotingSendRequestException, RemotingTimeoutException {
         long beginStartTime = System.currentTimeMillis();
+
+        // 根据Broker，获取Channel
         final Channel channel = this.getAndCreateChannel(addr);
+
+
         if (channel != null && channel.isActive()) {
             try {
+
+                // RPC钩子前置
                 doBeforeRpcHooks(addr, request);
+
                 long costTime = System.currentTimeMillis() - beginStartTime;
                 if (timeoutMillis < costTime) {
                     throw new RemotingTimeoutException("invokeSync call timeout");
                 }
                 RemotingCommand response = this.invokeSyncImpl(channel, request, timeoutMillis - costTime);
+
+
+                // RPC钩子后置
                 doAfterRpcHooks(RemotingHelper.parseChannelRemoteAddr(channel), request, response);
                 return response;
             } catch (RemotingSendRequestException e) {
@@ -401,6 +426,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         }
 
         ChannelWrapper cw = this.channelTables.get(addr);
+
         if (cw != null && cw.isOK()) {
             return cw.getChannel();
         }
@@ -408,7 +434,14 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         return this.createChannel(addr);
     }
 
+    /**
+     * 获取并且创建NameServer的Channel信道
+     * @return
+     * @throws RemotingConnectException
+     * @throws InterruptedException
+     */
     private Channel getAndCreateNameserverChannel() throws RemotingConnectException, InterruptedException {
+
         String addr = this.namesrvAddrChoosed.get();
         if (addr != null) {
             ChannelWrapper cw = this.channelTables.get(addr);
