@@ -42,28 +42,96 @@ import org.apache.rocketmq.store.config.FlushDiskType;
 import org.apache.rocketmq.store.util.LibC;
 import sun.nio.ch.DirectBuffer;
 
+/**
+ * MappedFile是RocketMQ内存映射文件
+ */
 public class MappedFile extends ReferenceResource {
+
+    /**
+     * 操作系统每页大小，默认4K
+     */
     public static final int OS_PAGE_SIZE = 1024 * 4;
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    /**
+     * 当前JVM实例中MappedFile虚拟内存
+     */
     private static final AtomicLong TOTAL_MAPPED_VIRTUAL_MEMORY = new AtomicLong(0);
 
+    /**
+     * 当前JVM实例中MappedFile对象个数
+     */
     private static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
+
+    /**
+     * 当前该文件的写指针，从0开始(内存映射文件中的写指针)
+     */
     protected final AtomicInteger wrotePosition = new AtomicInteger(0);
+
+    /**
+     * 当前文件的提交指针
+     * 如果开始transientStorePoolEnable，则数据会存储在TransientStorePool，
+     * 然后提交到内存映射ByteBuffer中，再刷写到磁盘
+     */
     protected final AtomicInteger committedPosition = new AtomicInteger(0);
+
+    /**
+     * 刷写到磁盘指针，该指针之前的数据持久化到磁盘中
+     */
     private final AtomicInteger flushedPosition = new AtomicInteger(0);
+
+    /**
+     * 文件大小
+     */
     protected int fileSize;
+
+    /**
+     * 文件通道
+     */
     protected FileChannel fileChannel;
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
      */
+    /**
+     * 堆内存ByteBuffer，如果不为空，数据首先将存储在该Buffer中
+     * 然后提交到MappedFile对应的内存映射文件Buffer
+     * 此时transientStorePoolEnable为true时不为空
+     */
     protected ByteBuffer writeBuffer = null;
+
+    /**
+     * 堆内存池，transientStorePoolEnable为true时启用
+     */
     protected TransientStorePool transientStorePool = null;
+
+    /**
+     * 文件名称
+     */
     private String fileName;
+
+    /**
+     * 该文件的初始偏移量
+     */
     private long fileFromOffset;
+
+    /**
+     * 物理文件
+     */
     private File file;
+
+    /**
+     * 物理文件对应的内存映射Buffer
+     */
     private MappedByteBuffer mappedByteBuffer;
+
+    /**
+     * 文件最后一次内存写入时间
+     */
     private volatile long storeTimestamp = 0;
+
+    /**
+     * 是否是MappedFileQueue队列中第一个文件
+     */
     private boolean firstCreateInQueue = false;
 
     public MappedFile() {
@@ -142,9 +210,21 @@ public class MappedFile extends ReferenceResource {
         return TOTAL_MAPPED_VIRTUAL_MEMORY.get();
     }
 
+    /**
+     * 根据是否开启transientStorePoolEnable存在两种初始化情况
+     * transientStorePoolEnable为true，表示内容先存储在堆外内存
+     * 然后通过Commit线程将数据提交到内存映射Buffer中
+     * 再通过Flush线程将内存映射Buffer中的数据持久化到磁盘中
+     * @param fileName
+     * @param fileSize
+     * @param transientStorePool
+     * @throws IOException
+     */
     public void init(final String fileName, final int fileSize,
         final TransientStorePool transientStorePool) throws IOException {
         init(fileName, fileSize);
+
+        // 如果transientStorePoolEnable为true，则初始化MappedFile的writeBuffer
         this.writeBuffer = transientStorePool.borrowBuffer();
         this.transientStorePool = transientStorePool;
     }
@@ -156,6 +236,12 @@ public class MappedFile extends ReferenceResource {
         this.fileFromOffset = Long.parseLong(this.file.getName());
         boolean ok = false;
 
+        /**
+         * 初始化fileFromOffset为文件名
+         * 也就是文件名代表该文件的起始偏移量
+         * 通过RandomAccessFile创建读写文件通道
+         * 并将文件内容使用NIO的内存映射Buffer将文件映射到内存中
+         */
         ensureDirOK(this.file.getParent());
 
         try {
