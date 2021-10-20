@@ -116,6 +116,16 @@ public class MappedFileQueue {
         return mfs;
     }
 
+    /**
+     * 删除offset之后的所有文件
+     * 遍历目录下的文件，如果文件的尾部偏移量小于offset则跳过该文件
+     * 如果尾部的偏移量大于offset，则进一步比较offset与文件的开始偏移量
+     * 如果文件的开始偏移量小于offset, 说明当前文件包含了有效偏移，设置mappedFile的wrotePosition,committedPosition,flushedPosition
+     *
+     * 如果文件的开始偏移量大于offset,说明该文件是有效文件后面创建的，调用MappedFile#destroy释放MappedFile占用的内存资源(内存映射与内存通道等)
+     * 然后加入到待删除文件列表中，最终调用deleteExpireFile将文件从物理磁盘删除
+     * @param offset
+     */
     public void truncateDirtyFiles(long offset) {
         List<MappedFile> willRemoveFiles = new ArrayList<MappedFile>();
 

@@ -1463,6 +1463,7 @@ public class DefaultMessageStore implements MessageStore {
             for (ConsumeQueue logic : maps.values()) {
                 String key = logic.getTopic() + "-" + logic.getQueueId();
                 table.put(key, logic.getMaxOffsetInQueue());
+
                 logic.correctMinOffset(minPhyOffset);
             }
         }

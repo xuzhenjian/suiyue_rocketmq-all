@@ -291,6 +291,15 @@ public class BrokerController {
             }
         }
 
+        /**
+         * 存储启动时所谓的文件恢复主要完成flushedPosition,committedWhere指针的设置，消息消费队列最大偏移量加载到内存
+         * 并删除flushedPosition之后的文件。
+         *
+         * 如果Broker异常启动，在文件恢复果餐中，RocketMQ会将最后一个有效文件中的所有消息重新转发到IndexFile, ConsumeQueue
+         * 确保不丢失消息，但同时会带来消息重复的问题
+         * 纵观RocketMQ的整体设计思想，RocketMQ保证消息不丢失，但不保证消息不会重复消费
+         * 所以消息消费业务方需要实现消息消费的幂等设计
+         */
         result = result && this.messageStore.load();
 
         if (result) {

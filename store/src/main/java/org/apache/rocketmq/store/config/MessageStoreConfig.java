@@ -84,8 +84,15 @@ public class MessageStoreConfig {
     // Whether check the CRC32 of the records consumed.
     // This ensures no on-the-wire or on-disk corruption to the messages occurred.
     // This check adds some overhead,so it may be disabled in cases seeking extreme performance.
+
+    /**
+     * 是否检查记录的CRC32
+     * 这将确保消息不会发生磁盘上的损坏
+     * 这个检查增加了一些开销，所以在寻求极端性能的情况下，可能会禁用它
+     */
     private boolean checkCRCOnRecover = true;
     // How many pages are to be flushed when flush CommitLog
+
     private int flushCommitLogLeastPages = 4;
     // How many pages are to be committed when commit data to file
     private int commitCommitLogLeastPages = 4;
