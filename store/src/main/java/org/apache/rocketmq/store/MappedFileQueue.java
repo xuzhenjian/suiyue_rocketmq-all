@@ -169,6 +169,13 @@ public class MappedFileQueue {
         }
     }
 
+    /**
+     * 获取目录下的所有文件并按照文件名排序
+     * 如果文件大小与配置文件的单个文件大小不一致，将忽略该目录下所有文件，然后创建MappedFile对象
+     *
+     * 注意Load方法将wrotePosition，flushedPosition, committedPosition三个指针都设置为文件大小
+     * @return
+     */
     public boolean load() {
         File dir = new File(this.storePath);
         File[] files = dir.listFiles();
@@ -216,8 +223,15 @@ public class MappedFileQueue {
         return 0;
     }
 
+    /**
+     * 如果needCreate为true，就创建新的MappedFile，维护到CopyOnWriteArrayList<MappedFile>mappedFiles
+     * @param startOffset
+     * @param needCreate
+     * @return
+     */
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
         long createOffset = -1;
+
         MappedFile mappedFileLast = getLastMappedFile();
 
         if (mappedFileLast == null) {
@@ -234,10 +248,12 @@ public class MappedFileQueue {
                 + UtilAll.offset2FileName(createOffset + this.mappedFileSize);
             MappedFile mappedFile = null;
 
+            // CommitLog走这里
             if (this.allocateMappedFileService != null) {
                 mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
             } else {
+                // ConsumeQueue走这里
                 try {
                     mappedFile = new MappedFile(nextFilePath, this.mappedFileSize);
                 } catch (IOException e) {
@@ -373,6 +389,19 @@ public class MappedFileQueue {
         }
     }
 
+    /**
+     * 执行文件销毁与删除
+     *
+     * 计算文件的最大存活时间=（文件的最后一次更新时间+文件存活时间，默认72个小时）
+     * 如果当前时间大于文件的最大存活时间或需要强制删除文件(当磁盘使用超过设置的阈值)，则执行MappedFile#destroy方法
+     * 清除MappedFile占有的相关资源, file文件，如果执行成功，将该文件加入到待删除文件列表
+     * 统一执行deleteExpiredFile，更新缓存MappedFile列表，CopyOnWriteArrayList<MappedFile> mappedFiles
+     * @param expiredTime
+     * @param deleteFilesInterval
+     * @param intervalForcibly
+     * @param cleanImmediately
+     * @return
+     */
     public int deleteExpiredFileByTime(final long expiredTime,
         final int deleteFilesInterval,
         final long intervalForcibly,
@@ -383,13 +412,19 @@ public class MappedFileQueue {
             return 0;
 
         int mfsLength = mfs.length - 1;
+
         int deleteCount = 0;
         List<MappedFile> files = new ArrayList<MappedFile>();
+
         if (null != mfs) {
             for (int i = 0; i < mfsLength; i++) {
                 MappedFile mappedFile = (MappedFile) mfs[i];
+
                 long liveMaxTimestamp = mappedFile.getLastModifiedTimestamp() + expiredTime;
+
+
                 if (System.currentTimeMillis() >= liveMaxTimestamp || cleanImmediately) {
+
                     if (mappedFile.destroy(intervalForcibly)) {
                         files.add(mappedFile);
                         deleteCount++;
@@ -467,9 +502,14 @@ public class MappedFileQueue {
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, this.flushedWhere == 0);
         if (mappedFile != null) {
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+
+            // 刷盘
             int offset = mappedFile.flush(flushLeastPages);
+
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.flushedWhere;
+
+            // 更新刷盘指针
             this.flushedWhere = where;
             if (0 == flushLeastPages) {
                 this.storeTimestamp = tmpTimeStamp;
@@ -483,7 +523,10 @@ public class MappedFileQueue {
         boolean result = true;
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {
+            // 提交
             int offset = mappedFile.commit(commitLeastPages);
+
+
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.committedWhere;
             this.committedWhere = where;

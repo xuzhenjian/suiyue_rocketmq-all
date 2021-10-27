@@ -212,6 +212,7 @@ public class TopicConfigManager extends ConfigManager {
 
                         createNew = true;
 
+                        // 持久化Topic信息
                         this.persist();
                     }
                 } finally {

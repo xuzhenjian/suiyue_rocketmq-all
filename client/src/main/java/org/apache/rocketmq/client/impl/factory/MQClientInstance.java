@@ -697,6 +697,8 @@ public class MQClientInstance {
                                     Entry<String, MQProducerInner> entry = it.next();
                                     MQProducerInner impl = entry.getValue();
                                     if (impl != null) {
+
+                                        // 更新ConcurrentMap<String/* topic */, TopicPublishInfo> topicPublishInfoTable
                                         impl.updateTopicPublishInfo(topic, publishInfo);
                                     }
                                 }

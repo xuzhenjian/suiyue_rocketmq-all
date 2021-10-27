@@ -53,6 +53,7 @@ public class HAService {
     private final DefaultMessageStore defaultMessageStore;
 
     private final WaitNotifyObject waitNotifyObject = new WaitNotifyObject();
+
     private final AtomicLong push2SlaveMaxOffset = new AtomicLong(0);
 
     private final GroupTransferService groupTransferService;

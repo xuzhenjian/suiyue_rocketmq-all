@@ -71,5 +71,10 @@ public class PermName {
         System.out.println(0x1);
         System.out.println(0x1 << 2);
         System.out.println(0x1 << 1);
+
+        int perm = PermName.PERM_READ | PermName.PERM_WRITE;
+        int value = perm &= ~PermName.PERM_INHERIT;
+        System.out.println(perm);
+        System.out.println(value);
     }
 }

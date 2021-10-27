@@ -32,10 +32,13 @@ public class MessageStoreConfig {
 
     // CommitLog file size,default is 1G
     private int mappedFileSizeCommitLog = 1024 * 1024 * 1024;
+
     // ConsumeQueue file size,default is 30W
     private int mappedFileSizeConsumeQueue = 300000 * ConsumeQueue.CQ_STORE_UNIT_SIZE;
+
     // enable consume queue ext
     private boolean enableConsumeQueueExt = false;
+
     // ConsumeQueue extend file size, 48M
     private int mappedFileSizeConsumeQueueExt = 48 * 1024 * 1024;
     // Bit count of filter bit map.
@@ -147,6 +150,7 @@ public class MessageStoreConfig {
     @ImportantField
     private boolean transientStorePoolEnable = false;
     private int transientStorePoolSize = 5;
+
     private boolean fastFailIfNoBufferInStorePool = false;
 
     private boolean enableDLegerCommitLog = false;
@@ -212,6 +216,11 @@ public class MessageStoreConfig {
 
         int factor = (int) Math.ceil(this.mappedFileSizeConsumeQueue / (ConsumeQueue.CQ_STORE_UNIT_SIZE * 1.0));
         return (int) (factor * ConsumeQueue.CQ_STORE_UNIT_SIZE);
+    }
+
+    public static void main(String[] args) {
+        MessageStoreConfig config = new MessageStoreConfig();
+        System.out.println(config.getMappedFileSizeConsumeQueue());
     }
 
     public void setMappedFileSizeConsumeQueue(int mappedFileSizeConsumeQueue) {

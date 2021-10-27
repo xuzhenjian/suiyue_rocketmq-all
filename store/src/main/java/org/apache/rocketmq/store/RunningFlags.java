@@ -129,4 +129,9 @@ public class RunningFlags {
         this.flagBits &= ~DISK_FULL_BIT;
         return result;
     }
+    
+    public static void main(String[] args) {
+        System.out.println(1 << 4);
+        System.out.println(~DISK_FULL_BIT);
+    }
 }

@@ -51,6 +51,7 @@ public class MappedFile extends ReferenceResource {
      * 操作系统每页大小，默认4K
      */
     public static final int OS_PAGE_SIZE = 1024 * 4;
+
     protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
     /**
@@ -319,6 +320,9 @@ public class MappedFile extends ReferenceResource {
 
         if (currentPos < this.fileSize) {
 
+            /**
+             * 根据同步还是异步，选择Buffer
+             */
             ByteBuffer byteBuffer = writeBuffer != null ? writeBuffer.slice() : this.mappedByteBuffer.slice();
             byteBuffer.position(currentPos);
 
@@ -388,6 +392,17 @@ public class MappedFile extends ReferenceResource {
     /**
      * @return The current flushed position
      */
+    /**
+     * 刷盘指的是将内存中的数据刷写到磁盘，永久存储在磁盘中
+     *
+     * 刷写磁盘，直接调用mappedByteBuffer或fileChannel的force方法将内存中的数据持久化到磁盘
+     * 那么flushedPosition应该等于MappedByteBuffer有效数据的指针
+     *
+     * 异步，如果writeBuffer不为空，则flushedPosition应等于上一次commit指针，因为上一次提交的数据就是进入到FileChannel
+     * 同步，如果writeBuffer为空，数据是直接进入到MappedByteBuffer，wrotePosition代表的是MappedByteBuffere中的指针，故设置flushed Position为wrotePosition
+     * @param flushLeastPages
+     * @return
+     */
     public int flush(final int flushLeastPages) {
         if (this.isAbleToFlush(flushLeastPages)) {
             if (this.hold()) {
@@ -414,6 +429,17 @@ public class MappedFile extends ReferenceResource {
         return this.getFlushedPosition();
     }
 
+    /**
+     * 内存映射文件的提交
+     *
+     * 执行提交操作,commitLeastPages为本次提交最小的页数，如果待提交数据不满commitLeastPages，则不执行本次提交操作，待下次提交。
+     *
+     * 如果writeBuffer为空，直接返回wrotePosition指针，无须提交commit操作，表明commit操作主体是writeBuffer
+     *
+     *
+     * @param commitLeastPages
+     * @return
+     */
     public int commit(final int commitLeastPages) {
         if (writeBuffer == null) {
             //no need to commit data to file channel, so just regard wrotePosition as committedPosition.
@@ -437,6 +463,12 @@ public class MappedFile extends ReferenceResource {
         return this.committedPosition.get();
     }
 
+    /**
+     * 具体的提交实现
+     * 首先创建writeBuffer的共享缓存区，然后将新创建的position回退到上一次提交的位置（committedPosition）
+     * 设置limit为wrotePosition（当前最大有效数据指针），然后把committedPosition到wrotePosition的数据复制写入到FileChannel中
+     * 然后更新committedPosition指针为wrotePosition。commit的作用就是将MappedFile的writeBuffer中的数据提交到文件通道FileChannel中
+     */
     protected void commit0() {
         int writePos = this.wrotePosition.get();
         int lastCommittedPosition = this.committedPosition.get();
@@ -470,6 +502,16 @@ public class MappedFile extends ReferenceResource {
         return write > flush;
     }
 
+    /**
+     * 判断是否执行commit操作，如果文件已满返回true
+     * 如果commitLeastPages大于0，则比较wrotePosition(当前writeBuffer的写指针)与上一次提交的指针(committedPosition)的差值
+     * 除以OS_PAGE_SIZE得到当前脏页的数量，如果大于commitLeastPages则返回true
+     *
+     *  如果commitLeastPages大于0，表示存在脏页就提交吧
+     *
+     * @param commitLeastPages
+     * @return
+     */
     protected boolean isAbleToCommit(final int commitLeastPages) {
         int flush = this.committedPosition.get();
         int write = this.wrotePosition.get();
@@ -518,6 +560,17 @@ public class MappedFile extends ReferenceResource {
         return null;
     }
 
+    /**
+     * 查找POS到当前最大可读之间的数据，由于在整个写入期间都未曾改变MappedBuffer的指针
+     * 所以MappedByteBuffer.slice()返回的共享缓存区空间为整个MappedFile,然后通过设置ByteBuffer的position为待查找的值
+     * 读取字节为当前可读字节长度，最终返回的ByteBuffer的limit(可读最大长度)为size
+     * 整个共享缓存区的容量为(MappedFile#fileSize-pos)，所以操作selectMappedBufferResult不能对包含在里面的ByteBuffer调用flip方法
+     *
+     * 操作ByteBuffer时如果使用了slice(), 对其ByteBuffer进行读取时一般手动指定position与limit指针
+     * 而不是调用flip方法来切换读写态
+     * @param pos
+     * @return
+     */
     public SelectMappedBufferResult selectMappedBuffer(int pos) {
         int readPosition = getReadPosition();
         if (pos < readPosition && pos >= 0) {
@@ -534,6 +587,17 @@ public class MappedFile extends ReferenceResource {
         return null;
     }
 
+    /**
+     * 如果available为true，表示MappedFile当前可用，无须清理，返回false
+     * 如果资源已经被清除，返回true
+     *
+     * 调用堆外内存的cleanup方法清除
+     * 维护MappedFile类变量的TOTAL_MAPPED_VIRTUAL_MEMORY，TOTAL_MAPPED_FILES
+     *
+     * 标识cleanupOver为true
+     * @param currentRef
+     * @return
+     */
     @Override
     public boolean cleanup(final long currentRef) {
         if (this.isAvailable()) {
@@ -564,11 +628,19 @@ public class MappedFile extends ReferenceResource {
         return true;
     }
 
+    /**
+     * MappedFile文件销毁的实现方法
+     *
+     * @param intervalForcibly
+     * @return
+     */
     public boolean destroy(final long intervalForcibly) {
         this.shutdown(intervalForcibly);
 
         if (this.isCleanupOver()) {
             try {
+
+                // 关闭文件通道，删除物理文件
                 this.fileChannel.close();
                 log.info("close file channel " + this.fileName + " OK");
 
@@ -601,6 +673,15 @@ public class MappedFile extends ReferenceResource {
 
     /**
      * @return The max position which have valid data
+     */
+    /**
+     * RocketMQ文件的一个组织方式是内存映射文件，预先申请一块连续的固定大小的内存，需要一套指针标识当前最大有效数据的位置
+     * 获取最大有效数据偏移量的方法由MappedFile的getReadPosition方法实现
+     *
+     * 获取当前文件最大的可读指针。如果writeBuffer为空，则直接返回当前的写指针
+     * 如果writeBuffer不为空，则返回上一次提交的指针
+     * 在MappedFile设计中，只有提交了的数据（写入到MappedByteBuffer或FileChannel中的数据）才是安全的数据
+     * @return
      */
     public int getReadPosition() {
         return this.writeBuffer == null ? this.wrotePosition.get() : this.committedPosition.get();

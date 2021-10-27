@@ -33,27 +33,40 @@ import org.apache.rocketmq.store.DefaultMessageStore;
 import org.apache.rocketmq.store.DispatchRequest;
 import org.apache.rocketmq.store.config.StorePathConfigHelper;
 
+/**
+ * 索引文件服务
+ */
 public class IndexService {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     /**
      * Maximum times to attempt index file creation.
      */
     private static final int MAX_TRY_IDX_CREATE = 3;
+
+
     private final DefaultMessageStore defaultMessageStore;
     private final int hashSlotNum;
     private final int indexNum;
     private final String storePath;
+
     private final ArrayList<IndexFile> indexFileList = new ArrayList<IndexFile>();
+
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
 
     public IndexService(final DefaultMessageStore store) {
         this.defaultMessageStore = store;
+
         this.hashSlotNum = store.getMessageStoreConfig().getMaxHashSlotNum();
         this.indexNum = store.getMessageStoreConfig().getMaxIndexNum();
         this.storePath =
             StorePathConfigHelper.getStorePathIndex(store.getMessageStoreConfig().getStorePathRootDir());
     }
 
+    /**
+     * 加载索引文件，如果上次异常退出，而且索引文件上次刷盘时间小于该索引文件最大的消息时间戳，那么立即销毁该文件
+     * @param lastExitOK
+     * @return
+     */
     public boolean load(final boolean lastExitOK) {
         File dir = new File(this.storePath);
         File[] files = dir.listFiles();
@@ -65,9 +78,11 @@ public class IndexService {
                     IndexFile f = new IndexFile(file.getPath(), this.hashSlotNum, this.indexNum, 0, 0);
                     f.load();
 
+                    /**
+                     * 如果不是正常退出， 索引文件的最后时间戳 大于 索引刷盘点，那么就销毁IndexFile，后续会重做IndexFile
+                     */
                     if (!lastExitOK) {
-                        if (f.getEndTimestamp() > this.defaultMessageStore.getStoreCheckpoint()
-                            .getIndexMsgTimestamp()) {
+                        if (f.getEndTimestamp() > this.defaultMessageStore.getStoreCheckpoint().getIndexMsgTimestamp()) {
                             f.destroy(0);
                             continue;
                         }
@@ -198,13 +213,22 @@ public class IndexService {
         return topic + "#" + key;
     }
 
+    /**
+     * 构建索引
+     * @param req
+     */
     public void buildIndex(DispatchRequest req) {
+        /**
+         * 获取或创建IndexFile文件并获取所有文件最大的物理偏移量。如果该消息的物理偏移量小于索引文件的物理偏移量，则说明是重复数据，忽略本次索引构建
+         */
         IndexFile indexFile = retryGetAndCreateIndexFile();
+
         if (indexFile != null) {
             long endPhyOffset = indexFile.getEndPhyOffset();
             DispatchRequest msg = req;
             String topic = msg.getTopic();
             String keys = msg.getKeys();
+
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
@@ -219,6 +243,7 @@ public class IndexService {
                     return;
             }
 
+            // 如果消息的唯一键不为空，则添加到Hash索引中，以便加速根据唯一键检索消息。
             if (req.getUniqKey() != null) {
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {
@@ -227,6 +252,7 @@ public class IndexService {
                 }
             }
 
+            // 构建索引键，RocketMQ支持为同一消息建立多个索引，多个索引键空格分开
             if (keys != null && keys.length() > 0) {
                 String[] keyset = keys.split(MessageConst.KEY_SEPARATOR);
                 for (int i = 0; i < keyset.length; i++) {
@@ -264,6 +290,7 @@ public class IndexService {
      * Retries to get or create index file.
      *
      * @return {@link IndexFile} or null on failure.
+     *
      */
     public IndexFile retryGetAndCreateIndexFile() {
         IndexFile indexFile = null;
@@ -316,9 +343,7 @@ public class IndexService {
                 String fileName =
                     this.storePath + File.separator
                         + UtilAll.timeMillisToHumanString(System.currentTimeMillis());
-                indexFile =
-                    new IndexFile(fileName, this.hashSlotNum, this.indexNum, lastUpdateEndPhyOffset,
-                        lastUpdateIndexTimestamp);
+                indexFile = new IndexFile(fileName, this.hashSlotNum, this.indexNum, lastUpdateEndPhyOffset, lastUpdateIndexTimestamp);
                 this.readWriteLock.writeLock().lock();
                 this.indexFileList.add(indexFile);
             } catch (Exception e) {

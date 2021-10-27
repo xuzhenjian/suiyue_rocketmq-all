@@ -27,9 +27,23 @@ import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.common.utils.ThreadUtils;
 
+/**
+ * 消息消费有两种模式：广播模式与集群模式，广播模式比较简单，每一个消费者需要去拉取订阅主题下所有消费队列的消息
+ *
+ * 默认是集群模式
+ * 在集群模式下，同一个消费组内有多个消息消费者，同一个主题存在多个消费队列，那么消费者如何进行消息队列负载呢
+ * 每一个消费组内维护一个线程池来消费消息，那么这些线程又是如何分工合作的呢？
+ *
+ * 消息队列负载，通常的做法是一个消息队列在同一时间只允许被一个消息消费者消费，一个消息消费者可以同时消费多个消息队列
+ *
+ * 从MQClientInstance的启动流程可以看出，RocketMQ使用一个单独的线程PullMessageService来负责消息的拉取
+ */
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();
+
     private final LinkedBlockingQueue<PullRequest> pullRequestQueue = new LinkedBlockingQueue<PullRequest>();
+
+
     private final MQClientInstance mQClientFactory;
     private final ScheduledExecutorService scheduledExecutorService = Executors
         .newSingleThreadScheduledExecutor(new ThreadFactory() {
@@ -43,6 +57,11 @@ public class PullMessageService extends ServiceThread {
         this.mQClientFactory = mQClientFactory;
     }
 
+    /**
+     * PullMessageService提供延迟添加与立即添加2种方式，将PullRequest放入到pullRequestQueue钟
+     * @param pullRequest
+     * @param timeDelay
+     */
     public void executePullRequestLater(final PullRequest pullRequest, final long timeDelay) {
         if (!isStopped()) {
             this.scheduledExecutorService.schedule(new Runnable() {
@@ -76,6 +95,14 @@ public class PullMessageService extends ServiceThread {
         return scheduledExecutorService;
     }
 
+    /**
+     * 根据消费组名，从MQClientInstance中获取消费者内部实现累MQConsumerInner
+     * 令人意外的是这里将Consumer强制转换为DefaultMQPushConsumerImpl, 也就是PullMessageService
+     *
+     * 该线程只为PUSH模式服务，那拉模式如何拉取消息呢？
+     * PULL模式，RocketMQ只需要提供拉取消息API即可，具体由应用程序显式调用拉取API
+     * @param pullRequest
+     */
     private void pullMessage(final PullRequest pullRequest) {
         final MQConsumerInner consumer = this.mQClientFactory.selectConsumer(pullRequest.getConsumerGroup());
         if (consumer != null) {
@@ -92,7 +119,14 @@ public class PullMessageService extends ServiceThread {
 
         while (!this.isStopped()) {
             try {
+                /**
+                 * 从pullRequestQueue中获取一个PullRequest消息拉取任务，如果pullRequest Queue为空，则线程将阻塞，直到有拉取任务被放入
+                 */
                 PullRequest pullRequest = this.pullRequestQueue.take();
+
+                /**
+                 * 调用pullMessage方法进行消息拉取
+                 */
                 this.pullMessage(pullRequest);
             } catch (InterruptedException ignored) {
             } catch (Exception e) {

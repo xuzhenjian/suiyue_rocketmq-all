@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
+import com.alibaba.fastjson.JSON;
 import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.common.UtilAll;
 import org.apache.rocketmq.common.constant.LoggerName;
@@ -64,14 +65,19 @@ public class CommitLog {
     protected final static int BLANK_MAGIC_CODE = -875286124;
     protected final MappedFileQueue mappedFileQueue;
     protected final DefaultMessageStore defaultMessageStore;
+
+
     private final FlushCommitLogService flushCommitLogService;
 
     //If TransientStorePool enabled, we must flush message to FileChannel at fixed periods
     private final FlushCommitLogService commitLogService;
 
     private final AppendMessageCallback appendMessageCallback;
+
+
     private final ThreadLocal<PutMessageThreadLocal> putMessageThreadLocal;
 
+    // 每个队列消费消息的偏移量
     protected HashMap<String/* topic-queueid */, Long/* offset */> topicQueueTable = new HashMap<String, Long>(1024);
 
     protected volatile long confirmOffset = -1L;
@@ -81,10 +87,15 @@ public class CommitLog {
     protected final PutMessageLock putMessageLock;
 
     public CommitLog(final DefaultMessageStore defaultMessageStore) {
+
+        /**
+         * CommitLog是异步创建MappedFile的
+         */
         this.mappedFileQueue = new MappedFileQueue(defaultMessageStore.getMessageStoreConfig().getStorePathCommitLog(),
             defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog(), defaultMessageStore.getAllocateMappedFileService());
         this.defaultMessageStore = defaultMessageStore;
 
+        // 刷盘的方式
         if (FlushDiskType.SYNC_FLUSH == defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
             this.flushCommitLogService = new GroupCommitService();
         } else {
@@ -684,6 +695,17 @@ public class CommitLog {
         keyBuilder.append("-");
         keyBuilder.append("QueueId");
         System.out.println(keyBuilder.toString());
+
+        CompletableFuture<PutMessageResult> flushResultFuture = new CompletableFuture<>();
+        flushResultFuture.complete(new PutMessageResult(PutMessageStatus.PUT_OK, null));
+
+        flushResultFuture.thenCombine(flushResultFuture, (result1, result2) -> {
+            System.out.println(JSON.toJSONString(result1));
+            System.out.println(JSON.toJSONString(result2));
+            return null;
+        });
+
+
     }
 
     public CompletableFuture<PutMessageResult> asyncPutMessage(final MessageExtBrokerInner msg) {
@@ -850,6 +872,8 @@ public class CommitLog {
 
         CompletableFuture<PutMessageStatus> flushResultFuture = submitFlushRequest(result, msg);
         CompletableFuture<PutMessageStatus> replicaResultFuture = submitReplicaRequest(result, msg);
+
+
         return flushResultFuture.thenCombine(replicaResultFuture, (flushStatus, replicaStatus) -> {
             if (flushStatus != PutMessageStatus.PUT_OK) {
                 putMessageResult.setPutMessageStatus(flushStatus);
@@ -865,6 +889,11 @@ public class CommitLog {
         });
     }
 
+    /**
+     * 批量存储消息
+     * @param messageExtBatch
+     * @return
+     */
     public CompletableFuture<PutMessageResult> asyncPutMessages(final MessageExtBatch messageExtBatch) {
         messageExtBatch.setStoreTimestamp(System.currentTimeMillis());
         AppendMessageResult result;
@@ -967,6 +996,8 @@ public class CommitLog {
 
         CompletableFuture<PutMessageStatus> flushOKFuture = submitFlushRequest(result, messageExtBatch);
         CompletableFuture<PutMessageStatus> replicaOKFuture = submitReplicaRequest(result, messageExtBatch);
+
+
         return flushOKFuture.thenCombine(replicaOKFuture, (flushStatus, replicaStatus) -> {
             if (flushStatus != PutMessageStatus.PUT_OK) {
                 putMessageResult.setPutMessageStatus(flushStatus);
@@ -986,11 +1017,19 @@ public class CommitLog {
     public CompletableFuture<PutMessageStatus> submitFlushRequest(AppendMessageResult result, MessageExt messageExt) {
         // Synchronization flush
         if (FlushDiskType.SYNC_FLUSH == this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
+
+            // 构建GroupCommitRequest，提交到GroupCommitService
             final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;
+
             if (messageExt.isWaitStoreMsgOK()) {
+
+
                 GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(),
                         this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
+
                 service.putRequest(request);
+
+                // 等待同步刷盘任务完成，如果超时则返回刷盘错误，刷盘成功后正常返回给调用方
                 return request.future();
             } else {
                 service.wakeup();
@@ -999,6 +1038,25 @@ public class CommitLog {
         }
         // Asynchronous flush
         else {
+
+            // 异步刷盘
+
+            /**
+             * 异步刷盘根据是否开启transientStorePoolEnable机制，刷盘实现会有细微差别
+             * 如果transientStorePoolEnable为true，RocketMQ会单独申请一个与目标物理文件(commitLog)同样大小的堆外内存，该堆外内存将使用内存锁定
+             * 确保不会被置换到虚拟内存中去，消息首先追加到堆外内存，然后提交与物理文件的内存映射内存中，再flush到磁盘
+             *
+             * 如果transientStorePoolEnable为false，消息直接追加到与物理文件直接映射的内存中，然后刷写到磁盘中
+             */
+
+
+            /**
+             * 1.首先将消息直接追加到ByteBuffer(堆外内存DirectByteBuffer), wrotePosition随着消息的不断追加，向后移动
+             * 2.CommitRealTimeService线程默认每200ms将ByteBuffer新追加的内容(wrotePosition-commitedPosition)的数据提交到MappedByteBuffer中
+             * 3.MappedByteBuffer在内存中追加提交的内容，wrotePosition指针向后移动，然后返回
+             * 4.commit操作成功返回，将commitedPosition向后移动本次提交的内容长度，此时wrotePosition指针依然可以向后推进
+             * 5.FlushRealTimeService线程默认将MappedByteBuffer中新追加的内存(wrotePosition减去上一次刷写位置flushedPosition), 通过调用MappedByteBuffer#force()方法将数据刷写到磁盘
+             */
             if (!this.defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
                 flushCommitLogService.wakeup();
             } else  {
@@ -1009,12 +1067,16 @@ public class CommitLog {
     }
 
     public CompletableFuture<PutMessageStatus> submitReplicaRequest(AppendMessageResult result, MessageExt messageExt) {
+
         if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {
             HAService service = this.defaultMessageStore.getHaService();
             if (messageExt.isWaitStoreMsgOK()) {
                 if (service.isSlaveOK(result.getWroteBytes() + result.getWroteOffset())) {
+
                     GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(),
                             this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
+
+
                     service.putRequest(request);
                     service.getWaitNotifyObject().wakeupAll();
                     return request.future();
@@ -1048,6 +1110,12 @@ public class CommitLog {
         return -1;
     }
 
+    /**
+     * 获取当前CommitLog目录最小偏移量，首先获取目录下的第一个文件，如果该文件可用，则返回该文件的起始偏移量
+     * 否则返回下一个文件的起始偏移量
+     * 如果
+     * @return
+     */
     public long getMinOffset() {
         MappedFile mappedFile = this.mappedFileQueue.getFirstMappedFile();
         if (mappedFile != null) {
@@ -1061,6 +1129,16 @@ public class CommitLog {
         return -1;
     }
 
+    /**
+     * 根据偏移量与消息长度查找消息
+     * 首先根据偏移找到所在的物理偏移量，然后用offset与文件长度取余得到在文件内的偏移量，从该偏移量读取size长度的内容返回即可
+     *
+     * 如果只根据消息偏移查找消息，则首先找到文件内的偏移量，然后尝试读取4个字节获取消息的实际长度，最后读取指定字节即可
+     *
+     * @param offset
+     * @param size
+     * @return
+     */
     public SelectMappedBufferResult getMessage(final long offset, final int size) {
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();
         MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, offset == 0);
@@ -1071,6 +1149,12 @@ public class CommitLog {
         return null;
     }
 
+    /**
+     * 根据该offset返回下一个文件的起始偏移量。首先获取一个文件的大小，减去(offset%mappedFileSize)
+     * 其目的是回到下一文件的起始偏移量
+     * @param offset
+     * @return
+     */
     public long rollNextFile(final long offset) {
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();
         return offset + mappedFileSize - offset % mappedFileSize;
@@ -1151,13 +1235,21 @@ public class CommitLog {
         public void run() {
             CommitLog.log.info(this.getServiceName() + " service started");
             while (!this.isStopped()) {
+
+                // CommitRealTimeService线程间隔时间，默认200ms
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitIntervalCommitLog();
 
+                // 一次提交任务至少包含页数，如果待提交数据不足，小于该参数配置的值，将忽略本次提交任务，默认4页
                 int commitDataLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogLeastPages();
 
+                // 两次真实提交最大间隔，默认200ms
                 int commitDataThoroughInterval =
                     CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogThoroughInterval();
 
+
+                /**
+                 * 如果距上次提交间隔超过commitDataThoroughInterval，则本次提交忽略commitDataLeastPages参数，也就是如果待提交数据小于指定页数，也执行提交操作
+                 */
                 long begin = System.currentTimeMillis();
                 if (begin >= (this.lastCommitTimestamp + commitDataThoroughInterval)) {
                     this.lastCommitTimestamp = begin;
@@ -1165,17 +1257,29 @@ public class CommitLog {
                 }
 
                 try {
+
+                    /**
+                     * 执行提交操作，将待提交数据提交到物理文件的内存映射内存区
+                     * 如果返回false，并不是代表提交失败，而是只提交一部分数据，唤醒刷盘线程执行刷盘操作
+                     * 该线程每完成一次提交动作，将等待200ms再就执行下一次提交任务
+                     */
                     boolean result = CommitLog.this.mappedFileQueue.commit(commitDataLeastPages);
                     long end = System.currentTimeMillis();
+
+
                     if (!result) {
                         this.lastCommitTimestamp = end; // result = false means some data committed.
                         //now wake up flush thread.
                         flushCommitLogService.wakeup();
                     }
 
+
+
                     if (end - begin > 500) {
                         log.info("Commit data to file costs {} ms", end - begin);
                     }
+
+
                     this.waitForRunning(interval);
                 } catch (Throwable e) {
                     CommitLog.log.error(this.getServiceName() + " service has exception. ", e);
@@ -1199,16 +1303,27 @@ public class CommitLog {
             CommitLog.log.info(this.getServiceName() + " service started");
 
             while (!this.isStopped()) {
+
+                // 默认为true，表示使用Thread.sleep等待， 如果为false, 表示await()方法
                 boolean flushCommitLogTimed = CommitLog.this.defaultMessageStore.getMessageStoreConfig().isFlushCommitLogTimed();
 
+                // FlushRealTimeService线程任务运行间隔
                 int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushIntervalCommitLog();
+
+                // 一次刷写任务至少包含页数，如果待刷写数据不足，小于该参数配置的值，将忽略本次刷写任务，默认4页
                 int flushPhysicQueueLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogLeastPages();
 
+                // 两次真实刷写任务最大间隔，默认10s
                 int flushPhysicQueueThoroughInterval =
                     CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogThoroughInterval();
 
                 boolean printFlushProgress = false;
 
+
+                /**
+                 * 如果距上次提交间隔超过flushPhysicQueueThoroughInterval，
+                 * 则本次刷盘任务将忽略flushPhysicQueueLeastPages，也就是如果待刷写数据小于指定页数，也执行刷写磁盘操作。
+                 */
                 // Print flush progress
                 long currentTimeMillis = System.currentTimeMillis();
                 if (currentTimeMillis >= (this.lastFlushTimestamp + flushPhysicQueueThoroughInterval)) {
@@ -1229,7 +1344,14 @@ public class CommitLog {
                     }
 
                     long begin = System.currentTimeMillis();
+
+
+                    /**
+                     * 调用flush方法将内存中数据刷写到磁盘，并且更新存储检测点文件的commitlog文件的更新时间戳
+                     * 文件检测点文件的刷盘动作在刷盘consumeQueue线程中执行，其入口为DefaultMessageStore#FlushConsumeQueueService
+                     */
                     CommitLog.this.mappedFileQueue.flush(flushPhysicQueueLeastPages);
+
                     long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();
                     if (storeTimestamp > 0) {
                         CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);
@@ -1273,8 +1395,14 @@ public class CommitLog {
     }
 
     public static class GroupCommitRequest {
+
+        // 刷盘点偏移量
         private final long nextOffset;
+
+        // 刷盘完成Future
         private CompletableFuture<PutMessageStatus> flushOKFuture = new CompletableFuture<>();
+
+
         private final long startTimestamp = System.currentTimeMillis();
         private long timeoutMillis = Long.MAX_VALUE;
 
@@ -1292,6 +1420,10 @@ public class CommitLog {
             return nextOffset;
         }
 
+        /**
+         * GroupCommitService线程处理GroupCommitRequest处理后
+         * @param putMessageStatus
+         */
         public void wakeupCustomer(final PutMessageStatus putMessageStatus) {
             this.flushOKFuture.complete(putMessageStatus);
         }
@@ -1306,8 +1438,14 @@ public class CommitLog {
      * GroupCommit Service
      */
     class GroupCommitService extends FlushCommitLogService {
+
+        // 同步刷盘任务暂存容器
         private volatile LinkedList<GroupCommitRequest> requestsWrite = new LinkedList<GroupCommitRequest>();
+
+        // GroupCommitService线程每次处理的request容器，这是一个设计亮点，避免了任务提交与任务执行的锁冲突
         private volatile LinkedList<GroupCommitRequest> requestsRead = new LinkedList<GroupCommitRequest>();
+
+
         private final PutMessageSpinLock lock = new PutMessageSpinLock();
 
         public synchronized void putRequest(final GroupCommitRequest request) {
@@ -1320,6 +1458,10 @@ public class CommitLog {
             this.wakeup();
         }
 
+        /**
+         * 由于避免同步刷盘消费任务与其他消息生产者提交任务直接的锁竞争
+         * GroupCommitService提供读容器与写容器，这两个容器每执行一次任务后，交互，继续消费任务
+         */
         private void swapRequests() {
             lock.lock();
             try {
@@ -1331,17 +1473,31 @@ public class CommitLog {
             }
         }
 
+        /**
+         * 执行刷盘操作，即调用MappedByteBuffer#force方法
+         *
+         * 1.遍历同步刷盘任务列表，根据加入顺序逐一执行刷盘逻辑
+         * 2.调用mappedFileQueue#flush方法执行刷盘操作，最终会调用MappedByteBuffer#force()方法
+         * 如果已刷盘指针大于等于提交的刷盘点，表示刷盘成功，每执行一次刷盘操作后，立即调用GroupCommitRequest#wakeupCustomer唤醒消息发送线程，并且通知刷盘结果
+         * 3.处理完所有同步刷盘任务后，更新刷盘检测点StoreCheckpoint中的physicMsgTimestamp
+         * 但是没有执行检测点的刷盘操作，刷盘检测点的刷盘操作将在消息队列文件时触发
+         *
+         * 同步刷盘的简单描述就是，消息生产者在消息服务端将消息内容追加内存映射文件中(内存)后
+         * 需要同步将内存的内容立刻刷写到磁盘。通过调用内存映射文件(MappedByteBuffer的force方法)，可将内存中的数据写入磁盘
+         */
         private void doCommit() {
             if (!this.requestsRead.isEmpty()) {
                 for (GroupCommitRequest req : this.requestsRead) {
                     // There may be a message in the next file, so a maximum of
                     // two times the flush
                     boolean flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
+
                     for (int i = 0; i < 2 && !flushOK; i++) {
                         CommitLog.this.mappedFileQueue.flush(0);
                         flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() >= req.getNextOffset();
                     }
 
+                    // flushOKFuture#complete
                     req.wakeupCustomer(flushOK ? PutMessageStatus.PUT_OK : PutMessageStatus.FLUSH_DISK_TIMEOUT);
                 }
 
@@ -1358,6 +1514,10 @@ public class CommitLog {
             }
         }
 
+        /**
+         * GroupCommitService每处理一批同步刷盘请求后(requestsRead容器中读取)，休息10ms
+         * 然后继续处理下一批，其任务的核心实现为doCommit方法
+         */
         public void run() {
             CommitLog.log.info(this.getServiceName() + " service started");
 
@@ -1382,6 +1542,7 @@ public class CommitLog {
                 this.swapRequests();
             }
 
+            // 刷盘
             this.doCommit();
 
             CommitLog.log.info(this.getServiceName() + " service end");
@@ -1552,8 +1713,6 @@ public class CommitLog {
              * 将消息内容存储到ByteBuffer中，然后创建AppendMessageResult
              * 这里只是将消息存储在MappedFile对应的内存映射Buffer，并没有刷到磁盘
              */
-
-
             AppendMessageResult result = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, msgLen, msgIdSupplier,
                 msgInner.getStoreTimestamp(), queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);
 
