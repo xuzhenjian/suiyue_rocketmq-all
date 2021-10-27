@@ -596,6 +596,16 @@ public class DefaultMessageStore implements MessageStore {
         return commitLog;
     }
 
+    /**
+     * 查找消息
+     * @param group Consumer group that launches this query. 消费组名称
+     * @param topic Topic to query.  主题名称
+     * @param queueId Queue ID to query. 队列ID
+     * @param offset Logical offset to start from. 待拉取偏移量
+     * @param maxMsgNums Maximum count of messages to query. 最大拉取消息条数
+     * @param messageFilter Message filter used to screen desired messages. 消息过滤器
+     * @return
+     */
     public GetMessageResult getMessage(final String group, final String topic, final int queueId, final long offset,
         final int maxMsgNums,
         final MessageFilter messageFilter) {
@@ -612,29 +622,71 @@ public class DefaultMessageStore implements MessageStore {
         long beginTime = this.getSystemClock().now();
 
         GetMessageStatus status = GetMessageStatus.NO_MESSAGE_IN_QUEUE;
+
+        // 待查找的队列偏移量
         long nextBeginOffset = offset;
+
+        // 当前消息队列最小偏移量
         long minOffset = 0;
+
+        // 当前消息队列最大偏移量
         long maxOffset = 0;
 
         GetMessageResult getResult = new GetMessageResult();
 
+        // 当前commitLog文件最大偏移量
         final long maxOffsetPy = this.commitLog.getMaxOffset();
 
+        /**
+         * 根据主题名称与队列编号获取消息消费队列
+         */
         ConsumeQueue consumeQueue = findConsumeQueue(topic, queueId);
+
+
         if (consumeQueue != null) {
             minOffset = consumeQueue.getMinOffsetInQueue();
             maxOffset = consumeQueue.getMaxOffsetInQueue();
 
+            /**
+             * 消息偏移量异常情况校对下一次拉取偏移量
+             *
+             * 1.maxOffset=0，表示队列没有消息，计算下一次拉取的开始偏移量
+             * 如果是主节点，或者是从节点但是开启了offsetCheckSlave，下次从0开始
+             * 如果是从节点，并不开启offsetCheckSlave，则使用原来的offset,因为考虑到主从同步延迟的因素，导致从节点consumequeue并没有同步到数据
+             */
             if (maxOffset == 0) {
                 status = GetMessageStatus.NO_MESSAGE_IN_QUEUE;
                 nextBeginOffset = nextOffsetCorrection(offset, 0);
             } else if (offset < minOffset) {
+
+                /**
+                 * offset < minOffset
+                 * 表示要拉取的偏移量小于队列最小的偏移量
+                 *
+                 * 如果是主节点，或从节点开启offsetCheckSlave,下次拉取的偏移量为minOffset
+                 * 如果是从节点且没开启offsetCheckSlave,则保持原先的offset
+                 *
+                 */
                 status = GetMessageStatus.OFFSET_TOO_SMALL;
                 nextBeginOffset = nextOffsetCorrection(offset, minOffset);
             } else if (offset == maxOffset) {
+                /**
+                 * 表示超出一个，返回状态:OFFSET_OVERLOW_ONE,offset保持不变
+                 */
                 status = GetMessageStatus.OFFSET_OVERFLOW_ONE;
                 nextBeginOffset = nextOffsetCorrection(offset, offset);
             } else if (offset > maxOffset) {
+
+                /**
+                 * 如果从节点且没有开启offsetCheckSlave，则使用原偏移量，这个是正常的
+                 *
+                 * 如果是主节点 或者从节点开启offsetCheckSlave，表示offset是一个非法的偏移量
+                 * 如果minOffset=0，则设置下一个拉取偏移量为0，否则设置为最大偏移量
+                 *
+                 * 丁威：我感觉设置为0，重新拉取，有可能消息重复，设置为最大可能消息会丢失
+                 * 什么时候会offset>maxOffse拉取完消息，进行第二次拉取时，应该还有第二次修正消息的处理？
+                 *
+                 */
                 status = GetMessageStatus.OFFSET_OVERFLOW_BADLY;
                 if (0 == minOffset) {
                     nextBeginOffset = nextOffsetCorrection(offset, minOffset);
@@ -642,6 +694,11 @@ public class DefaultMessageStore implements MessageStore {
                     nextBeginOffset = nextOffsetCorrection(offset, maxOffset);
                 }
             } else {
+                /**
+                 * 大于minOffset，并小于maxOffset,是正常情况
+                 */
+
+                // 从consumeQueue中从当前offset到当前consumequeue中最大可读消息内存
                 SelectMappedBufferResult bufferConsumeQueue = consumeQueue.getIndexBuffer(offset);
                 if (bufferConsumeQueue != null) {
                     try {
@@ -650,10 +707,15 @@ public class DefaultMessageStore implements MessageStore {
                         long nextPhyFileStartOffset = Long.MIN_VALUE;
                         long maxPhyOffsetPulling = 0;
 
+                        /**
+                         *
+                         */
                         int i = 0;
                         final int maxFilterMessageCount = Math.max(16000, maxMsgNums * ConsumeQueue.CQ_STORE_UNIT_SIZE);
                         final boolean diskFallRecorded = this.messageStoreConfig.isDiskFallRecorded();
                         ConsumeQueueExt.CqExtUnit cqExtUnit = new ConsumeQueueExt.CqExtUnit();
+
+
                         for (; i < bufferConsumeQueue.getSize() && i < maxFilterMessageCount; i += ConsumeQueue.CQ_STORE_UNIT_SIZE) {
                             long offsetPy = bufferConsumeQueue.getByteBuffer().getLong();
                             int sizePy = bufferConsumeQueue.getByteBuffer().getInt();
@@ -1293,6 +1355,7 @@ public class DefaultMessageStore implements MessageStore {
 
     private long nextOffsetCorrection(long oldOffset, long newOffset) {
         long nextOffset = oldOffset;
+
         if (this.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE || this.getMessageStoreConfig().isOffsetCheckInSlave()) {
             nextOffset = newOffset;
         }

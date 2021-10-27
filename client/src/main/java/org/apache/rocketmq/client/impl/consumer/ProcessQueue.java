@@ -46,6 +46,7 @@ import org.apache.rocketmq.common.protocol.body.ProcessQueueInfo;
  * PullMessageService然后将消息提交到消费者消费线程池，消息成功消费后从ProcessQueue中移除
  */
 public class ProcessQueue {
+
     public final static long REBALANCE_LOCK_MAX_LIVE_TIME =
         Long.parseLong(System.getProperty("rocketmq.client.rebalance.lockMaxLiveTime", "30000"));
 
@@ -62,6 +63,7 @@ public class ProcessQueue {
 
     // ProcessQueue中总消息数
     private final AtomicLong msgCount = new AtomicLong();
+
     private final AtomicLong msgSize = new AtomicLong();
     private final Lock consumeLock = new ReentrantLock();
 
@@ -85,20 +87,36 @@ public class ProcessQueue {
 
     // 上一次消息消费时间错
     private volatile long lastConsumeTimestamp = System.currentTimeMillis();
+
     private volatile boolean locked = false;
+
     private volatile long lastLockTimestamp = System.currentTimeMillis();
     private volatile boolean consuming = false;
+
+
     private volatile long msgAccCnt = 0;
 
+    /**
+     * 判断锁是否过期，锁超时时间默认为30s，可以通过系统参数rocketmq.client.rebalance.lockMaxLiveTime来设置
+     * @return
+     */
     public boolean isLockExpired() {
         return (System.currentTimeMillis() - this.lastLockTimestamp) > REBALANCE_LOCK_MAX_LIVE_TIME;
     }
 
+    /**
+     * 判断PullMessageService是否空闲，默认120s，通过系统参数rocketmq.client.pull.pullMaxIdleTime来设置
+     * @return
+     */
     public boolean isPullExpired() {
         return (System.currentTimeMillis() - this.lastPullTimestamp) > PULL_MAX_IDLE_TIME;
     }
 
     /**
+     * @param pushConsumer
+     */
+    /**
+     * 移除消费超时的信息，默认超过15分钟未消费的消息将延迟3个延迟级别再消费
      * @param pushConsumer
      */
     public void cleanExpiredMsg(DefaultMQPushConsumer pushConsumer) {
@@ -151,6 +169,11 @@ public class ProcessQueue {
         }
     }
 
+    /**
+     * 添加消息，PullMessageService拉取消息后，先调用该方法将消息添加到ProcessQueue
+     * @param msgs
+     * @return
+     */
     public boolean putMessage(final List<MessageExt> msgs) {
         boolean dispatchToConsume = false;
         try {
@@ -192,6 +215,11 @@ public class ProcessQueue {
         return dispatchToConsume;
     }
 
+    /**
+     * 获取当前消息最大间隔，getMaxSpan()并不能说明ProcessQueue中包含的消息个数，
+     * 但是能说明当前处理队列中第一条消息与最后一条消息的偏移量已经超过的消息个数
+     * @return
+     */
     public long getMaxSpan() {
         try {
             this.treeMapLock.readLock().lockInterruptibly();
@@ -270,6 +298,9 @@ public class ProcessQueue {
         this.locked = locked;
     }
 
+    /**
+     * 将consumingMsgOrderlyTreeMap所有消息重新放入msgTreeMap，并且清除consumingMsgOrderlyTreeMap
+     */
     public void rollback() {
         try {
             this.treeMapLock.writeLock().lockInterruptibly();
@@ -284,6 +315,10 @@ public class ProcessQueue {
         }
     }
 
+    /**
+     * 将consumingMsgOrderlyTreeMap的消息清除掉，表示成功处理该消息
+     * @return
+     */
     public long commit() {
         try {
             this.treeMapLock.writeLock().lockInterruptibly();
@@ -307,6 +342,10 @@ public class ProcessQueue {
         return -1;
     }
 
+    /**
+     * 重新消费该消息
+     * @param msgs
+     */
     public void makeMessageToConsumeAgain(List<MessageExt> msgs) {
         try {
             this.treeMapLock.writeLock().lockInterruptibly();
@@ -323,6 +362,11 @@ public class ProcessQueue {
         }
     }
 
+    /**
+     * 从ProcessQueue中 取出batchSize条消息
+     * @param batchSize
+     * @return
+     */
     public List<MessageExt> takeMessages(final int batchSize) {
         List<MessageExt> result = new ArrayList<MessageExt>(batchSize);
         final long now = System.currentTimeMillis();
