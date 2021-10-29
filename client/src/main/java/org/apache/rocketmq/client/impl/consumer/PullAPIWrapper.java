@@ -77,6 +77,10 @@ public class PullAPIWrapper {
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
             List<MessageExt> msgList = MessageDecoder.decodes(byteBuffer);
 
+            /**
+             *  基于TAG模式的在服务端拉取消息时，会首先过滤一次，只是针对TAG的hashcode，但其实并不准确
+             *  那在消费端还需要根据TAG,只进行再一次验证
+             */
             List<MessageExt> msgListFilterAgain = msgList;
             if (!subscriptionData.getTagsSet().isEmpty() && !subscriptionData.isClassFilterMode()) {
                 msgListFilterAgain = new ArrayList<MessageExt>(msgList.size());

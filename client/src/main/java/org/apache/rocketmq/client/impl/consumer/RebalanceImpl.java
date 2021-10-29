@@ -43,14 +43,19 @@ import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
 
 public abstract class RebalanceImpl {
     protected static final InternalLogger log = ClientLogger.getLog();
+
     protected final ConcurrentMap<MessageQueue, ProcessQueue> processQueueTable = new ConcurrentHashMap<MessageQueue, ProcessQueue>(64);
-    protected final ConcurrentMap<String/* topic */, Set<MessageQueue>> topicSubscribeInfoTable =
-        new ConcurrentHashMap<String, Set<MessageQueue>>();
-    protected final ConcurrentMap<String /* topic */, SubscriptionData> subscriptionInner =
-        new ConcurrentHashMap<String, SubscriptionData>();
+
+    protected final ConcurrentMap<String/* topic */, Set<MessageQueue>> topicSubscribeInfoTable = new ConcurrentHashMap<String, Set<MessageQueue>>();
+
+    protected final ConcurrentMap<String /* topic */, SubscriptionData> subscriptionInner = new ConcurrentHashMap<String, SubscriptionData>();
+
     protected String consumerGroup;
     protected MessageModel messageModel;
+
     protected AllocateMessageQueueStrategy allocateMessageQueueStrategy;
+
+
     protected MQClientInstance mQClientFactory;
 
     public RebalanceImpl(String consumerGroup, MessageModel messageModel,
@@ -214,6 +219,16 @@ public abstract class RebalanceImpl {
         }
     }
 
+    /**
+     * 每个DefaultMQPushConsumerImpl都持有一个单独的RebalanceImpl对象
+     * 该方法主要遍历订阅信息，对每个主题的队列进行重新负载
+     *
+     * RebalanceImpl的Map<String,SubscriptionData>subTable在调用消费者DefaultMQPushConsumerImpl#subscribe方法时填充
+     *
+     * 如果订阅信息发生变化，例如调用了unSubscribe方法，则需要将不关心的主题消费队列从processQueueTable中移除
+     *
+     * @param isOrder
+     */
     public void doRebalance(final boolean isOrder) {
         Map<String, SubscriptionData> subTable = this.getSubscriptionInner();
         if (subTable != null) {
@@ -236,6 +251,19 @@ public abstract class RebalanceImpl {
         return subscriptionInner;
     }
 
+    /**
+     * 从主题订阅信息缓存表中获取主题的队列信息
+     * 集群模式：
+     * 发送请求从Broker中该消费者内当前所有的消费者客户端ID， 主题TOPIC的队列可能分布在多个Broker上，那请求发往哪个Broker呢？
+     *
+     * RocketMQ从主题的路由信息表中随机选择一个Broker。Broker为什么会存在消费组内所有消费者的信息？
+     *
+     * 消费者在启动的时候会向MQClientInstance中注册消费者，然后MQClientInstance会向所有的Broker发送心跳包
+     * 心跳包中包含MQClientInstance的消费者信息。
+     *
+     * @param topic
+     * @param isOrder
+     */
     private void rebalanceByTopic(final String topic, final boolean isOrder) {
         switch (messageModel) {
             case BROADCASTING: {
@@ -268,13 +296,48 @@ public abstract class RebalanceImpl {
                     log.warn("doRebalance, {} {}, get consumer id list failed", consumerGroup, topic);
                 }
 
+                /**
+                 * 如果MessageQueue集合和ConsumerIdList 任意一个为空则忽略本次消息队列负载
+                 */
                 if (mqSet != null && cidAll != null) {
+
+                    /**
+                     * 首先对cidAll,mqAll排序，这个很重要，同一个消费组内看到的试图保持一致，确保同一个消费队列不会被多个消费者分配
+                     *
+                     */
                     List<MessageQueue> mqAll = new ArrayList<MessageQueue>();
                     mqAll.addAll(mqSet);
 
                     Collections.sort(mqAll);
                     Collections.sort(cidAll);
 
+                    /**
+                     * RocketMQ默认提供5钟分配算法
+                     *
+                     * AllocateMessageQueueAveragely: 平均分配，推荐指数为5颗星
+                     * 加入现在有8个消息消费队列：q1,q2,q3,q4,q5,q6,q7.q8, 有3个消费者c1,c2,c3
+                     * 那么根据该负载算法，消息队列分配如下
+                     * c1: q1,q2,q3
+                     * c2: q4,q5,q6
+                     * c3: q7,q8
+                     *
+                     * AllocateMessageQueueAveragelyByCircle: 平均轮询分配，推荐指数为5颗星
+                     * 举例来说，如果现在有8个消息消费队列q1,q2,q3,q4,q5,q6,q7,q8，有3个消费者c1,c2,c3，那么过呢据负载算法，消息队列分配如下
+                     * c1: q1,q4,q7
+                     * c2: q2,q5,q8
+                     * c3: q3,q6
+                     *
+                     * AllocateMessageQueueConsistentHash: 一致性hash。不推荐使用，因为消息队列负载信息不容易追踪
+                     * AllocateMessageQueueByConfig: 根据配置，为每一个消费者配置固定的消息队列
+                     * AllocateMessageQueueByMachineRoom: 根据Broker部署机房名，对每个消费者负责不同Broker上的队列
+                     *
+                     * 注意：
+                     *  消息负载算法如果没有特殊的要求，尽量使用AllocateMessageQueueAveragely, AllocateMessageQueueAveragelyByCircle
+                     *  因为分配算法比较直观。消息队列分遵循一个消费者可以分配多个消息队列，但同一消息队列只会分配一个消费者
+                     *
+                     *
+                     *  所以如果消费者个数大于消费队列数量，则有些消费者无法消费消息
+                     */
                     AllocateMessageQueueStrategy strategy = this.allocateMessageQueueStrategy;
 
                     List<MessageQueue> allocateResult = null;

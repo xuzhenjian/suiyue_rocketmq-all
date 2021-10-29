@@ -106,16 +106,34 @@ public class MessageStoreConfig {
     private int flushCommitLogThoroughInterval = 1000 * 10;
     private int commitCommitLogThoroughInterval = 200;
     private int flushConsumeQueueThoroughInterval = 1000 * 60;
+
+
+    /**
+     * 消息在内存, 拉取消息限制
+     */
     @ImportantField
     private int maxTransferBytesOnMessageInMemory = 1024 * 256;
     @ImportantField
     private int maxTransferCountOnMessageInMemory = 32;
+
+    /**
+     * 消息在磁盘中，拉取消息限制
+     */
     @ImportantField
     private int maxTransferBytesOnMessageInDisk = 1024 * 64;
     @ImportantField
     private int maxTransferCountOnMessageInDisk = 8;
+
+
+    /**
+     * 消息存储再物理内存中占用的最大比例，memory=物理内存*比例
+     * 如果maxOffsetPy - offsetPy > memory的话
+     * 说明offsetPy这个偏移量的消息已经从内存中置换到磁盘中了
+     */
     @ImportantField
     private int accessMessageInMemoryMaxRatio = 40;
+
+
     @ImportantField
     private boolean messageIndexEnable = true;
     private int maxHashSlotNum = 5000000;

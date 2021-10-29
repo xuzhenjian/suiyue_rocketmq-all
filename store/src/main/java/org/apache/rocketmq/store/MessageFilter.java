@@ -19,6 +19,16 @@ package org.apache.rocketmq.store;
 import java.nio.ByteBuffer;
 import java.util.Map;
 
+
+/**
+ * RocketMQ: 消息过滤有两种模式
+ * 类过滤classFilterMode，表达式模式Expression, 又分为ExpressionType.TAG和ExpressionType.SQL92
+ *
+ * TAG过滤，在服务端拉取时，会根据ConsumeQueue条目中存储的tag hashCode与订阅的tag(hashCode集合)进行匹配，匹配成功则放入待返回消息结果中
+ * 然后在消息消费端(消费端，还会对消息的订阅消息字符串进行再一次过滤，为什么要进行两次过滤呢？ 主要就还是为了提供服务器端消费消息队列文件存储的性能)
+ *
+ * 如果直接进行字符串匹配，那么consumeQueue条目无法设置为定长结构，检索consumeQueue就不方便
+ */
 public interface MessageFilter {
     /**
      * match by tags code or filter bit map which is calculated when message received

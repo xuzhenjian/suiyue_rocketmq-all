@@ -764,6 +764,21 @@ public class MQClientAPIImpl {
         return sendResult;
     }
 
+    /**
+     * MQClientAPIImpl#pullMessageAsync, NettyRemotingClient在收到服务端响应结构后
+     * 会回调PullCallback的onSuccess或onException
+     *
+     * PullCallback对象在DefaultMQPushConsumerImpl#pullMessage中创建
+     * @param addr
+     * @param requestHeader
+     * @param timeoutMillis
+     * @param communicationMode
+     * @param pullCallback
+     * @return
+     * @throws RemotingException
+     * @throws MQBrokerException
+     * @throws InterruptedException
+     */
     public PullResult pullMessage(
         final String addr,
         final PullMessageRequestHeader requestHeader,
@@ -832,9 +847,28 @@ public class MQClientAPIImpl {
         return this.processPullResponse(response, addr);
     }
 
+    /**
+     * 处理拉取消息响应
+     * @param response
+     * @param addr
+     * @return
+     * @throws MQBrokerException
+     * @throws RemotingCommandException
+     */
     private PullResult processPullResponse(
         final RemotingCommand response,
         final String addr) throws MQBrokerException, RemotingCommandException {
+
+        /**
+         * 根据响应结果解码成PullResultExt对象,此时只是从网络读取消息列表到byte[] messageBinary属性
+         *
+         *
+         * -------------------ResponseCode-------------|-------------------PullStatus------------------------|
+         * SUCCESS                                     | FOUND
+         * PULL_RETRY_IMMEDIATELY                      | NO_MATCHED_MSG
+         * PULL_OFFSET_MOVED                           | OFFSET_ILLEGAL
+         * PULL_NOT_FOUND                              | NO_NEW_MSG
+         */
         PullStatus pullStatus = PullStatus.NO_NEW_MSG;
         switch (response.getCode()) {
             case ResponseCode.SUCCESS:

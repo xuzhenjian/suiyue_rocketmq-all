@@ -37,6 +37,31 @@ import org.apache.rocketmq.common.utils.ThreadUtils;
  * 消息队列负载，通常的做法是一个消息队列在同一时间只允许被一个消息消费者消费，一个消息消费者可以同时消费多个消息队列
  *
  * 从MQClientInstance的启动流程可以看出，RocketMQ使用一个单独的线程PullMessageService来负责消息的拉取
+ *
+ *
+ *
+ *  PullMessageService                                   DefaultMQPushConsumerImpl                 MQClientAPIImpl
+ *         run                                              获取ProcessQueue                     向服务端发送RequestCode.PULL_MESSAGE
+ *         |                                                       |                                       |
+ *  pullRequestQueue.toke()                                  消息拉取流量控制                       返回消息拉取结果
+ *         |                                                       |                                       |
+ *  pullMessage(pullRequest)                               获取主题订阅消息                       PullAPIWrapper编码解码拉取结果
+ *         |                                                       |                                       |
+ *  pullMessage在发送                                       构建消息拉取系统标记                    执行PullCallBack回调
+ *  pullMessageAsync后立即返回                                      |                                        |
+ *  拉取任务为异步                                                                                执行消息过滤逻辑
+ *  将pullRequest添加到pullRequestQueue                      获取Broker或者FilterServer地址                   |
+ *                                                                |                            将拉取的消息提交到消费者消息线程池
+ *                                                          pullMessageAsync
+ *
+ *
+ *
+ *
+ *  PullMessageProcessor
+ *           |
+ *  构建消息过滤器
+ *          |
+ *  MessageStore.getMessage 包含消息过滤逻辑
  */
 public class PullMessageService extends ServiceThread {
     private final InternalLogger log = ClientLogger.getLog();

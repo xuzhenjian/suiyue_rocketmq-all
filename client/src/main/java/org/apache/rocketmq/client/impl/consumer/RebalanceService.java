@@ -21,10 +21,26 @@ import org.apache.rocketmq.client.log.ClientLogger;
 import org.apache.rocketmq.common.ServiceThread;
 import org.apache.rocketmq.logging.InternalLogger;
 
+/**
+ * 消息队列负载与重新分布机制
+ *
+ * PullMessageService在启动时由于LinkedBlockingQueue<PullRequest> pullRequestQueue中没有PullRequest对象，故PullMessageService线程将阻塞
+ *
+ * 1.PullRequest对象在什么时候创建并加入到pullRequestQueue中，以便唤醒PullMessageService线程
+ * 2.集群内多个消费者是如何负载主题下的多个消费队列，并且如果有新的消费者加入时，消息队列又会如何重新分布
+ *
+ *
+ * RocketMQ消息队列重新分布是由RebalanceService线程来实现的，一个MQClientInstance持有一个RebalanceService实现，并随着MQClientInstance的启动而启动
+ *
+ *
+ */
 public class RebalanceService extends ServiceThread {
+
     private static long waitInterval =
         Long.parseLong(System.getProperty(
             "rocketmq.client.rebalance.waitInterval", "20000"));
+
+
     private final InternalLogger log = ClientLogger.getLog();
     private final MQClientInstance mqClientFactory;
 
@@ -32,6 +48,10 @@ public class RebalanceService extends ServiceThread {
         this.mqClientFactory = mqClientFactory;
     }
 
+    /**
+     * RebalanceService线程默认每隔20S, 执行一次mqClientFactory.doRebalance()方法
+     * 可以使用-Drocketmq.client.rebalance.waitInterval=interval来改变默认值
+     */
     @Override
     public void run() {
         log.info(this.getServiceName() + " service started");

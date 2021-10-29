@@ -79,6 +79,23 @@ import org.apache.rocketmq.remoting.RPCHook;
 import org.apache.rocketmq.remoting.common.RemotingHelper;
 import org.apache.rocketmq.remoting.exception.RemotingException;
 
+
+/**
+ * 消息拉取长轮询机制分析
+ *
+ *  RocketMQ并没有真正实现推模式，而是消费者主动向消费服务器拉取消息
+ *  RocketMQ推模式是循环向消息服务器端发送消息拉取请求，如果消息消费者向RocketMQ发送消息拉取时
+ *  消息并未到达消息队列，如果不启动长轮询机制，则会在服务端等待shortPolling-TimeMills时间后(挂起)，再去判断消息是否已到消息队列
+ *  如果消息未到达则提示消息拉取客户端PULL_NOT_FOUND
+ *
+ *  如果开启长轮询模式，RocketMQ一方面会每5s轮询检查一次消息是否可达
+ *  同时一有新消息到达后立马通知挂起线程，再次验证新消息是否是自己感兴趣的消息
+ *  如果是，则从commitLog文件提取消息返回给消息拉取客户端，否则知道挂起超时
+ *  超时时间由消息拉取方在消息拉取时，封装在请求参数中，PUSH模式默认为15S
+ *
+ *  Pull模式通过DefaultMQPullConsumer#setBrokerSuspendMaxTimeMillis设置
+ *  RocketMQ通过在Broker端配置longPollingEnable为true，来开启长轮询模式
+ */
 public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     /**
      * Delay some time when exception occur
@@ -229,6 +246,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
          * 从PullRequest中获取ProcessQueue，如果处理队列当前状态未被丢弃，则更新ProcessQueue的lastPullTimestamp为当前时间戳
          */
         final ProcessQueue processQueue = pullRequest.getProcessQueue();
+
         if (processQueue.isDropped()) {
             log.info("the pull request[{}] is dropped.", pullRequest.toString());
             return;
@@ -358,18 +376,35 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             @Override
             public void onSuccess(PullResult pullResult) {
                 if (pullResult != null) {
+
+                    // 真正消费之前都会执行过滤
                     pullResult = DefaultMQPushConsumerImpl.this.pullAPIWrapper.processPullResult(pullRequest.getMessageQueue(), pullResult,
                         subscriptionData);
 
                     switch (pullResult.getPullStatus()) {
                         case FOUND:
+
+                            /**
+                             * 找到消息直接将这一批(默认32条)，先丢到ProcessQueue中，然后直接将该批submit到ConsumeMessageService的线程池
+                             * 在submitConsumeRequest会根据consumeMessageBatchMaxSize
+                             */
                             long prevRequestOffset = pullRequest.getNextOffset();
                             pullRequest.setNextOffset(pullResult.getNextBeginOffset());
+
                             long pullRT = System.currentTimeMillis() - beginTimestamp;
+
                             DefaultMQPushConsumerImpl.this.getConsumerStatsManager().incPullRT(pullRequest.getConsumerGroup(),
                                 pullRequest.getMessageQueue().getTopic(), pullRT);
 
+
+                            /**
+                             *  更新PullRequest的下一次拉取偏移量，如果msgFoundList为空，则立即将PullRequest放入到PullMessageService的pullRequestQueue
+                             *  以便PullMessageService能够及时唤醒并再次执行消息拉取，为什么PullStatus.FOUND,msgFoundList还会为空
+                             *
+                             *  因为RocketMQ根据TAG消息过滤，在服务器只是验证了TAG的hashCode,在客户端再次对消息进行过滤，可能会出现msgFoundList为空的情况
+                             */
                             long firstMsgOffset = Long.MAX_VALUE;
+
                             if (pullResult.getMsgFoundList() == null || pullResult.getMsgFoundList().isEmpty()) {
                                 DefaultMQPushConsumerImpl.this.executePullRequestImmediately(pullRequest);
                             } else {
@@ -378,13 +413,20 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                                 DefaultMQPushConsumerImpl.this.getConsumerStatsManager().incPullTPS(pullRequest.getConsumerGroup(),
                                     pullRequest.getMessageQueue().getTopic(), pullResult.getMsgFoundList().size());
 
+
+                                // 放入消息
                                 boolean dispatchToConsume = processQueue.putMessage(pullResult.getMsgFoundList());
+
+                                // 投递消息给消费线程
                                 DefaultMQPushConsumerImpl.this.consumeMessageService.submitConsumeRequest(
                                     pullResult.getMsgFoundList(),
                                     processQueue,
                                     pullRequest.getMessageQueue(),
                                     dispatchToConsume);
 
+                                /**
+                                 * 拉取消息延迟
+                                 */
                                 if (DefaultMQPushConsumerImpl.this.defaultMQPushConsumer.getPullInterval() > 0) {
                                     DefaultMQPushConsumerImpl.this.executePullRequestLater(pullRequest,
                                         DefaultMQPushConsumerImpl.this.defaultMQPushConsumer.getPullInterval());
@@ -403,20 +445,52 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                             }
 
                             break;
+                            // 没有找到新的消息，然后立马加入到待拉取任务中，然后PullMessageService就会立马开始遍历拉取任务(继续下一个待拉取偏移量进行拉取)
                         case NO_NEW_MSG:
                         case NO_MATCHED_MSG:
+
+                            /**
+                             * 没有新消息，没有匹配消息，则直接使用服务器端校正的偏移量进行下一次消息的拉取
+                             */
                             pullRequest.setNextOffset(pullResult.getNextBeginOffset());
 
                             DefaultMQPushConsumerImpl.this.correctTagsOffset(pullRequest);
 
                             DefaultMQPushConsumerImpl.this.executePullRequestImmediately(pullRequest);
+
+                            /**
+                             * NO_NEW_MSG, 对应着服务器端的状态 GetMessageResult.OFFSET_FOUND_NULL,GetMessageResult.OFFSET_OVERFLOW_ONE
+                             *
+                             * OFFSET_OVERFLOW_ONE: 待拉取offset等于消息队列最大的偏移量，如果有新的消息到达，此时会创建一个新的ConsumeQueue文件
+                             * 按照上一个ConsumeQueue的最大偏移量就是下一个文件的起始偏移量， 所以如果按照该offset第二次拉取消息时能成功
+                             *
+                             * OFFSET_FOUND_NULL: 是根据ConsumeQueue的偏移量没有内容，将偏移量定位到下一个ConsumeQueue
+                             * 起始也就是offset + (一个ConsumeQueue包含多少个条目 = MappedFileSize / 20 )
+                             */
                             break;
                         case OFFSET_ILLEGAL:
+                            /**
+                             * 偏移量非法，则暂时停止从该队列拉消息，持久化该messageQueue,然后丢弃ProcessQueue
+                             * 待下次队列负载时，根据消费进度重新再拉取
+                             */
+
+                            /**
+                             * 如果拉取结果显示偏移量非法,首先将ProcessQueue设置dropped为true，表示丢弃该消息队列
+                             * 意味着ProcessQueue中拉取的消息将停止消费，然后根据服务端下一次校对的偏移量尝试更新消息消费进度(内存中)
+                             *
+                             * 尝试持久化消息消费进度，并将该消息队列从RebalanceImpl的处理队列中移除，意味着暂停该消息队列的消息拉取，等待下一次消息队列重新负载
+                             *
+                             * OFFSET_ILLEGAL对应服务端GetMessageResult状态的NO_MATCHED_LOGIC_QUEUE, NO_MESSAGE_IN_QUEUE
+                             * OFFSET_OVERFLOW_BADLY, OFFSET_TOO_SMALL
+                             * 这些状态服务端偏移量校正基本采用原offset,在客户端更新消费进度时，只有当消息进度比当前消费进度大才会覆盖，保证消息消费的准确性
+                             */
                             log.warn("the pull request offset illegal, {} {}",
                                 pullRequest.toString(), pullResult.toString());
                             pullRequest.setNextOffset(pullResult.getNextBeginOffset());
 
                             pullRequest.getProcessQueue().setDropped(true);
+
+
                             DefaultMQPushConsumerImpl.this.executeTaskLater(new Runnable() {
 
                                 @Override

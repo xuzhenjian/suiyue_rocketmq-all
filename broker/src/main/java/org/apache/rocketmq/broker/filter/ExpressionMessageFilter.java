@@ -57,17 +57,26 @@ public class ExpressionMessageFilter implements MessageFilter {
         }
     }
 
+
     @Override
     public boolean isMatchedByConsumeQueue(Long tagsCode, ConsumeQueueExt.CqExtUnit cqExtUnit) {
+        /**
+         * 如果subscriptionData=null, 说明此模式不是Expression模式，直接返回true，表示匹配信息，这里是Expression模式
+         * 也就是非ClassFilterMode，包含TAG,SQL92表达式
+         */
         if (null == subscriptionData) {
             return true;
         }
 
+        // 如果classFilterMode直接返回true，说明isMatchedByConsumeQueue不处理 classFilterMode
         if (subscriptionData.isClassFilterMode()) {
             return true;
         }
 
         // by tags code.
+        /**
+         * 如果是TAG模式，只需要对比TAG的hashcode,因为consumeQueue只包含了tagHashCode
+         */
         if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {
 
             if (tagsCode == null) {
@@ -124,10 +133,15 @@ public class ExpressionMessageFilter implements MessageFilter {
             return true;
         }
 
+
         if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {
             return true;
         }
 
+        /**
+         * 说明isMatchedByCommitLog只为ExpressionType.SQL92服务
+         * 为什么SQL92是基于SQL表达式，因为里面的属性来源于消息体，所以需要从commitlog中解析消息体，并得到tag，然后进行匹配
+         */
         ConsumerFilterData realFilterData = this.consumerFilterData;
         Map<String, String> tempProperties = properties;
 
