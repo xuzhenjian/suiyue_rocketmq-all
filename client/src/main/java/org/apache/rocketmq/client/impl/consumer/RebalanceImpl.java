@@ -359,6 +359,7 @@ public abstract class RebalanceImpl {
                     }
 
                     boolean changed = this.updateProcessQueueTableInRebalance(topic, allocateResultSet, isOrder);
+
                     if (changed) {
                         log.info(
                             "rebalanced result changed. allocateMessageQueueStrategyName={}, group={}, topic={}, clientId={}, mqAllSize={}, cidAllSize={}, rebalanceResultSize={}, rebalanceResultSet={}",
@@ -389,6 +390,19 @@ public abstract class RebalanceImpl {
         }
     }
 
+    /**
+     * 对比消息队列是否发生变化
+     *
+     * 主要思路是遍历当前负载队列集合，如果队列不在新分配队列集合中，需要将该队列停止消费并保存消费进度
+     *
+     * 遍历已分配的队列，如果队列不在负载表中(processQueueTable)，则需要创建该队列拉取任务pullRequest
+     * 然后添加到PullMessageService线程的pullRequestQueue中,PullMessageService才会继续拉取任务
+     *
+     * @param topic
+     * @param mqSet
+     * @param isOrder
+     * @return
+     */
     private boolean updateProcessQueueTableInRebalance(final String topic, final Set<MessageQueue> mqSet,
         final boolean isOrder) {
         boolean changed = false;
@@ -429,6 +443,7 @@ public abstract class RebalanceImpl {
 
         List<PullRequest> pullRequestList = new ArrayList<PullRequest>();
         for (MessageQueue mq : mqSet) {
+
             if (!this.processQueueTable.containsKey(mq)) {
                 if (isOrder && !this.lock(mq)) {
                     log.warn("doRebalance, {}, add a new mq failed, {}, because lock failed", consumerGroup, mq);
