@@ -39,13 +39,37 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
  * Local storage implementation
  */
 public class LocalFileOffsetStore implements OffsetStore {
+
+    /**
+     * 消息进度存储目录，可以通过-Drocketmq.client.localOffsetStoreDir
+     * 如果未指定，则默认为用户主目录/.rocketmq_offsets
+     */
     public final static String LOCAL_OFFSET_STORE_DIR = System.getProperty(
         "rocketmq.client.localOffsetStoreDir",
         System.getProperty("user.home") + File.separator + ".rocketmq_offsets");
+
     private final static InternalLogger log = ClientLogger.getLog();
+
+    /**
+     * 消息客户端
+     */
     private final MQClientInstance mQClientFactory;
+
+    /**
+     * 消息消费组
+     */
     private final String groupName;
+
+    /**
+     * 消息进度存储文件
+     * LOCAL_OFFSET_STORE_DIR/.rocketmq_offsets/{mqClientFactory.getClientId}/groupName/offsets.json
+     *
+     */
     private final String storePath;
+
+    /**
+     * 消息消费进度(内存)
+     */
     private ConcurrentMap<MessageQueue, AtomicLong> offsetTable =
         new ConcurrentHashMap<MessageQueue, AtomicLong>();
 
@@ -180,6 +204,14 @@ public class LocalFileOffsetStore implements OffsetStore {
         return cloneOffsetTable;
     }
 
+    /**
+     * OffsetSerializeWrapper内部就是一个ConcurrentMap<MessageQueue,AtomicLong> offsetTable
+     *
+     * readLocalOffset方法首先从storePath中尝试加载，如果从该文件读取的内容为空
+     * 就会尝试从storePath+".bak"中尝试加载，如果还是未找到，则返回null
+     * @return
+     * @throws MQClientException
+     */
     private OffsetSerializeWrapper readLocalOffset() throws MQClientException {
         String content = null;
         try {
