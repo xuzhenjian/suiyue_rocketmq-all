@@ -85,7 +85,7 @@ public class ProcessQueue {
     // 上一次开始消息拉取时间戳
     private volatile long lastPullTimestamp = System.currentTimeMillis();
 
-    // 上一次消息消费时间错
+    // 上一次消息消费时间戳
     private volatile long lastConsumeTimestamp = System.currentTimeMillis();
 
     private volatile boolean locked = false;

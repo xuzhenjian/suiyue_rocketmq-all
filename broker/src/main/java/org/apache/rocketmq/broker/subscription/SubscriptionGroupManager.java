@@ -121,6 +121,14 @@ public class SubscriptionGroupManager extends ConfigManager {
     public SubscriptionGroupConfig findSubscriptionGroupConfig(final String group) {
         SubscriptionGroupConfig subscriptionGroupConfig = this.subscriptionGroupTable.get(group);
         if (null == subscriptionGroupConfig) {
+
+            /**
+             * 消费组订阅信息配置信息存储在Broker的 {Rocket_home}/store/config/subscriptionGroup.json
+             * 默认情况下 BrokerConfig.autoCreateSubscriptionGroup默认为true
+             * 表示在第一次使用消费组配置信息时如果不存在，则使用上述默认值自动创建一个
+             * 如果为false，则只能通过客户端命令mqadmin updateSubGroup创建后修改相关参数
+             */
+
             if (brokerController.getBrokerConfig().isAutoCreateSubscriptionGroup() || MixAll.isSysConsumerGroup(group)) {
                 subscriptionGroupConfig = new SubscriptionGroupConfig();
                 subscriptionGroupConfig.setGroupName(group);

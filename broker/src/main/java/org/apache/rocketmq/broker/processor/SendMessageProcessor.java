@@ -121,15 +121,24 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
     private CompletableFuture<RemotingCommand> asyncConsumerSendMsgBack(ChannelHandlerContext ctx,
                                                                         RemotingCommand request) throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
+
         final ConsumerSendMsgBackRequestHeader requestHeader =
                 (ConsumerSendMsgBackRequestHeader)request.decodeCommandCustomHeader(ConsumerSendMsgBackRequestHeader.class);
+
+
         String namespace = NamespaceUtil.getNamespaceFromResource(requestHeader.getGroup());
         if (this.hasConsumeMessageHook() && !UtilAll.isBlank(requestHeader.getOriginMsgId())) {
             ConsumeMessageContext context = buildConsumeMessageContext(namespace, requestHeader, request);
             this.executeConsumeMessageHookAfter(context);
         }
+
+        /**
+         * 获取消费组的订阅配置信息，如果配置信息为空返回配置组信息不存在错误
+         */
         SubscriptionGroupConfig subscriptionGroupConfig =
             this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(requestHeader.getGroup());
+
+
         if (null == subscriptionGroupConfig) {
             response.setCode(ResponseCode.SUBSCRIPTION_GROUP_NOT_EXIST);
             response.setRemark("subscription group not exist, " + requestHeader.getGroup() + " "
@@ -142,12 +151,18 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             return CompletableFuture.completedFuture(response);
         }
 
+        /**
+         * 如果重试队列数量小于1，则直接返回成功，说明该消费组不支持重试
+         */
         if (subscriptionGroupConfig.getRetryQueueNums() <= 0) {
             response.setCode(ResponseCode.SUCCESS);
             response.setRemark(null);
             return CompletableFuture.completedFuture(response);
         }
 
+        /**
+         * 创建重试主题，重试主题名称： %RETRY%+消费组名称，并从重试队列中随机选择一个队列，并构建TopicConfig主题配置信息
+         */
         String newTopic = MixAll.getRetryTopic(requestHeader.getGroup());
         int queueIdInt = Math.abs(this.random.nextInt() % 99999999) % subscriptionGroupConfig.getRetryQueueNums();
         int topicSysFlag = 0;
@@ -170,6 +185,11 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             response.setRemark(String.format("the topic[%s] sending message is forbidden", newTopic));
             return CompletableFuture.completedFuture(response);
         }
+
+        /**
+         * 根据消息物理偏移量从commitLog文件中获取消息，同时将消息的主题存入属性中
+         *  MessageAccessor.putProperty(msgExt, MessageConst.PROPERTY_RETRY_TOPIC, msgExt.getTopic());
+         */
         MessageExt msgExt = this.brokerController.getMessageStore().lookMessageByOffset(requestHeader.getOffset());
         if (null == msgExt) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -183,8 +203,12 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
         msgExt.setWaitStoreMsgOK(false);
 
-        int delayLevel = requestHeader.getDelayLevel();
 
+        /**
+         * 设置消息重试次数，如果消息已重试次数超过maxReconsumeTimes，再次改变newTopic主题为DLQ("%DLQ%")
+         * 该主题的权限为只写，说明消息一旦进入到DLQ队列中，RocketMQ将不负责再次调度进行消费了，需要人工干预
+         */
+        int delayLevel = requestHeader.getDelayLevel();
         int maxReconsumeTimes = subscriptionGroupConfig.getRetryMaxTimes();
         if (request.getVersion() >= MQVersion.Version.V3_4_9.ordinal()) {
             Integer times = requestHeader.getMaxReconsumeTimes();
@@ -213,6 +237,11 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             msgExt.setDelayTimeLevel(delayLevel);
         }
 
+        /**
+         * 根据原先的消息创建一个新的消息对象，重试消息会拥有自己的唯一消息ID(msgId)并存入到commitLog文件中
+         * 并不会去更新原先消息，而是会将原先的主题，消息ID存入消息的属性中
+         * 主题名称为重试主题，其他属性与原先消息保持相同
+         */
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(newTopic);
         msgInner.setBody(msgExt.getBody());
@@ -231,6 +260,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         String originMsgId = MessageAccessor.getOriginMessageId(msgExt);
         MessageAccessor.setOriginMessageId(msgInner, UtilAll.isBlank(originMsgId) ? msgExt.getMsgId() : originMsgId);
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgExt.getProperties()));
+
 
         CompletableFuture<PutMessageResult> putMessageResult = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
         return putMessageResult.thenApply((r) -> {

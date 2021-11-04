@@ -56,6 +56,8 @@ import org.apache.rocketmq.store.schedule.ScheduleMessageService;
  * 单个文件都被设计成固定长度，如果一个文件写满以后再创建一个新文件
  * 文件名就为该文件第一条消息对应的全局物理偏移量。
  * RocketMQ使用MappedFile,MappedFileQueue来封装存储文件
+ *
+ * flushedPosition <= committedPosition <= wrotePosition <= fileSIze
  **/
 public class CommitLog {
     // Message's MAGIC CODE daa320a7
@@ -726,7 +728,7 @@ public class CommitLog {
 
         /**
          * 如果消息的延迟级别大于0，将消息的原主题名称与原消息队列ID存入消息属性中
-         * 用延迟消息主题SCHEDULE_TOPIC_XXXX，DelayLevel2QueueId更新原先消息的主题与队列
+         * 用延迟消息主题SCHEDULE_TOPIC_XXXX，DelayLevel2QueueId更新原先消息的主题与队列(队列ID为延迟级别-1)
          * 这是并发消息消费重试关键的一步
          */
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {

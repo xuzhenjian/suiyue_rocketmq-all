@@ -1194,15 +1194,33 @@ public class MQClientAPIImpl {
         ConsumerSendMsgBackRequestHeader requestHeader = new ConsumerSendMsgBackRequestHeader();
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.CONSUMER_SEND_MSG_BACK, requestHeader);
 
+        // 消费组名
         requestHeader.setGroup(consumerGroup);
+        // 消息主题
         requestHeader.setOriginTopic(msg.getTopic());
+        // 消息物理偏移量
         requestHeader.setOffset(msg.getCommitLogOffset());
+        /**
+         * 延迟级别，RocketMQ不支持精确的定时消息调度，而是提供几个延时级别
+         * MessageStoreConfig#messageDelayLevel = "1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h"
+         * 如果delayLevel=1表示延迟5S, delayLevel=2则表示延迟10S
+         */
         requestHeader.setDelayLevel(delayLevel);
+
+        // 消息ID
         requestHeader.setOriginMsgId(msg.getMsgId());
+
+        // 最大重新消费次数，默认为16次
         requestHeader.setMaxReconsumeTimes(maxConsumeRetryTimes);
 
+        /**
+         * 客户端以同步方式发送RequestCode.CONSUME_SEND到服务端。
+         * 服务端命令处理器：SendMessageProcessor#consumerSendMsgBack
+         */
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
             request, timeoutMillis);
+
+
         assert response != null;
         switch (response.getCode()) {
             case ResponseCode.SUCCESS: {

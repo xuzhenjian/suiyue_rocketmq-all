@@ -90,7 +90,7 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
  *
  *  如果开启长轮询模式，RocketMQ一方面会每5s轮询检查一次消息是否可达
  *  同时一有新消息到达后立马通知挂起线程，再次验证新消息是否是自己感兴趣的消息
- *  如果是，则从commitLog文件提取消息返回给消息拉取客户端，否则知道挂起超时
+ *  如果是，则从commitLog文件提取消息返回给消息拉取客户端，否则直到挂起超时
  *  超时时间由消息拉取方在消息拉取时，封装在请求参数中，PUSH模式默认为15S
  *
  *  Pull模式通过DefaultMQPullConsumer#setBrokerSuspendMaxTimeMillis设置
@@ -650,10 +650,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
     public void sendMessageBack(MessageExt msg, int delayLevel, final String brokerName)
         throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
         try {
+
             String brokerAddr = (null != brokerName) ? this.mQClientFactory.findBrokerAddressInPublish(brokerName)
                 : RemotingHelper.parseSocketAddressAddr(msg.getStoreHost());
             this.mQClientFactory.getMQClientAPIImpl().consumerSendMessageBack(brokerAddr, msg,
                 this.defaultMQPushConsumer.getConsumerGroup(), delayLevel, 5000, getMaxReconsumeTimes());
+
+
         } catch (Exception e) {
             log.error("sendMessageBack Exception, " + this.defaultMQPushConsumer.getConsumerGroup(), e);
 
@@ -1307,6 +1310,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         return queueTimeSpan;
     }
 
+    /**
+     * 恢复重试消息主题名，这是为什么呢？
+     * 这是由消息重试机制决定的，RocketMQ将消息存入commitLog文件时，如果发现消息的延时级别delayTimeLevel大于0
+     * 会首先将重试主题存入消息的属性中，然后设置主题名称为SCHEDULE_TOPIC,以便时间到后重新参与消息消费
+     * @param msgs
+     * @param consumerGroup
+     */
     public void resetRetryAndNamespace(final List<MessageExt> msgs, String consumerGroup) {
         final String groupTopic = MixAll.getRetryTopic(consumerGroup);
         for (MessageExt msg : msgs) {

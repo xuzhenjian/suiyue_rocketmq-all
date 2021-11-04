@@ -312,7 +312,7 @@ public abstract class RebalanceImpl {
                     Collections.sort(cidAll);
 
                     /**
-                     * RocketMQ默认提供5钟分配算法
+                     * RocketMQ默认提供5种分配算法
                      *
                      * AllocateMessageQueueAveragely: 平均分配，推荐指数为5颗星
                      * 加入现在有8个消息消费队列：q1,q2,q3,q4,q5,q6,q7.q8, 有3个消费者c1,c2,c3
@@ -407,6 +407,18 @@ public abstract class RebalanceImpl {
         final boolean isOrder) {
         boolean changed = false;
 
+        /**
+         * ConcurrentMap<MessageQueue, ProcessQueue> processQueueTable，当前消费者负载的消费队列缓存表
+         * 如果缓存表中的MessageQueue不包含在mqSet中，说明经过本次消息队列负载后，该MQ被分配给其他消费者，故需要暂停该消息队列消息的消费
+         * 方法是将ProcessQueue的状态设置为droped=true，该ProcessQueue中的消息将不会再被消费
+         * 调用removedUnnecessaryMessageQueue方法判断是否将MessageQueue，ProcessQueue缓存表中移除
+         *
+         * removeUnnecessaryMessageQueue在RebalanceImpl定义为抽象方法
+         * removeUnnecessaryMessageQueue方法主要持久化待移除MessageQueue消息消费进度
+         *
+         * 在PUSH模式下，如果是集群模式且是顺序消息消费时，还需要解锁队列
+         *
+         */
         Iterator<Entry<MessageQueue, ProcessQueue>> it = this.processQueueTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<MessageQueue, ProcessQueue> next = it.next();
@@ -441,6 +453,15 @@ public abstract class RebalanceImpl {
             }
         }
 
+        /**
+         * 遍历本次负载分配到的队列集合，如果ProcessQueueTable中没有包含该消息队列，表明这是新增到的消息队列
+         * 首先从内存中移除该消息队列的消费进度，然后从磁盘中读取该消息队列的消费进度，创建PullRequest对象
+         *
+         * 这里有一个关键，如果读取到的消息进度小于0，则需要校对消费进度
+         * RocketMQ提供CONSUME_FROM_LAST_OFFSET, CONSUME_FROM_FIRST_OFFSET,CONSUME_FROM_TIMESTAMP方式
+         * 在创建消费者时可以通过调用DefaultMQPushConsumer#setConsumeFromWhere方法设置
+         * PullRequest的nextOffset计算逻辑位于: RebalancePushImpl#computePullFromWhere
+         */
         List<PullRequest> pullRequestList = new ArrayList<PullRequest>();
         for (MessageQueue mq : mqSet) {
 
@@ -481,6 +502,9 @@ public abstract class RebalanceImpl {
             }
         }
 
+        /**
+         * 将PullRequest加入到PullMessageService，以便唤醒PullMessageService线程
+         */
         this.dispatchPullRequest(pullRequestList);
 
         return changed;

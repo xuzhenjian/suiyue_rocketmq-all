@@ -65,4 +65,22 @@ public class ConsumerMain {
      *  同一条消息（同一消息消费队列）在同一时间只会被消息组内的一个消费者消费
      *  并且随着消息队列的动态变化重新负载，所以消息进度需要保存在一个每个消费者都能访问到的地方
      */
+
+    /**
+     * RocketMQ消息拉取由PullMessageService与RebalanceService共同协作完成
+     *
+     *
+     * PullMessageService                                       RebalanceService
+     *          start                                                 start
+     *          |                                                       |
+     * pullRequestQueue.take()                                每隔20s进行一次队列负载
+     *          |                                                      |
+     * pullRequestQueue是否为空                              获取主题队列信息mqSet与消费组所有所有消费者cidAll
+     *          |                                                      |
+     * 消息拉取成功后将pullRequest加入到                        计算当前消费者分配到消息队列集合
+     * pullRequestQueue，继续该队列的                                     |
+     * 下一次消息拉取                                         如果新队列集合中不包含原先的队列，则停止原先队列消息消费并移除
+     *                                                                 |
+     *                                                     如果原先队列中不包含新分配队列，则创建PullRequest
+     */
 }

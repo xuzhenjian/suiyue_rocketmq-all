@@ -34,6 +34,13 @@ import org.apache.rocketmq.logging.InternalLogger;
  *
  *
  */
+
+/**
+ * 1.RebalanceService线程每隔20s对消费者订阅的主题进行一次队列重新分配，每一次分配都会获取主题的所有队列，从Broker服务器实时查询当前该主题该消费组内消费者列表
+ * 对新分配的消息队列会创建对应的PullRequest对象，在一个JVM进程中，同一个消费组同一个队列只会存在一个PullRequest对象
+ *
+ * 2.由于每次进行队列负载时都会从Broker实时查询当前消费组所有消费者，并且对消费队列，消费者列表进行排序，这样新加入的消费者就会在队列重新分布时，分配到消费者队列从而消费消息
+ */
 public class RebalanceService extends ServiceThread {
 
     private static long waitInterval =

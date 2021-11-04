@@ -25,7 +25,13 @@ public class RequestCode {
 
     public static final int QUERY_MESSAGE = 12;
     public static final int QUERY_BROKER_OFFSET = 13;
+
+    /**
+     * 查询消费者偏移量
+     */
     public static final int QUERY_CONSUMER_OFFSET = 14;
+
+
     public static final int UPDATE_CONSUMER_OFFSET = 15;
     public static final int UPDATE_AND_CREATE_TOPIC = 17;
     public static final int GET_ALL_TOPIC_CONFIG = 21;
@@ -40,7 +46,13 @@ public class RequestCode {
     public static final int TRIGGER_DELETE_FILES = 27;
 
     public static final int GET_BROKER_RUNTIME_INFO = 28;
+
+    /**
+     * 通过时间戳，找到消息偏移量
+     */
     public static final int SEARCH_OFFSET_BY_TIMESTAMP = 29;
+
+
     public static final int GET_MAX_OFFSET = 30;
     public static final int GET_MIN_OFFSET = 31;
 
