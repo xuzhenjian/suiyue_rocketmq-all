@@ -98,6 +98,12 @@ public class FilterServerManager {
         this.scheduledExecutorService.shutdown();
     }
 
+    /**
+     * 先从FilterServerTable中以网络通道为key获取FilterServerInfo，如果不等于空，则更新一下上次更新时间为当前时间
+     * 否则创建一个新的FilterServerInfo对象并加入到FilterServerTable路由表
+     * @param channel
+     * @param filterServerAddr
+     */
     public void registerFilterServer(final Channel channel, final String filterServerAddr) {
         FilterServerInfo filterServerInfo = this.filterServerTable.get(channel);
         if (filterServerInfo != null) {
@@ -134,6 +140,19 @@ public class FilterServerManager {
         }
     }
 
+    /**
+     * 回想一下，在NameServer存储主题的路由信息中 路由元数据包含HashMap<String/* brokerAddr *, List<String>/* Filter Server > filterServerTable
+     * 那么NameServer关于Broker的FilterServer信息是如何从Broker传输到NameServer的呢
+     *
+     *
+     * Broker每30S向所有NameServer发送心跳包，心跳包中包含了集群名称，Broker名称，Broker地址，BrokerId，haServer地址，topic配置，过滤服务器列表
+     *
+     * Broker维护了FilterServer信息，并且定时监控FilterServer的状态，然后Broker通过与所有NameServer的心跳包，向NameServer注册Broker上存储的FilterServer列表
+     * 消息消费者从FilterServer上拉取信息
+     *
+     *
+     * @return
+     */
     public List<String> buildNewFilterServerList() {
         List<String> addr = new ArrayList<>();
         Iterator<Entry<Channel, FilterServerInfo>> it = this.filterServerTable.entrySet().iterator();
@@ -144,8 +163,23 @@ public class FilterServerManager {
         return addr;
     }
 
+    /**
+     * FilterServer与Broker通过心跳维持FilterServer在Broker端注册，同样在Broker每隔10S扫描一下该注册表
+     * 如果30S没有收到FilterServer的注册信息，将关闭Broker与FilterServer的连接
+     *
+     * Broker为了避免Broker端FilterServer的异常退出导致FilterServer进程越来越少，同样提供一个定时任务每隔30S检测一下当前存活的FilterServer进程的个数
+     * 如果当前存活的FilterServer进程个数小于配置的数量，则自动创建一个FilterServer进程
+     */
     static class FilterServerInfo {
+
+        /**
+         * FilterServer服务器地址
+         */
         private String filterServerAddr;
+
+        /**
+         * 上次发送心跳包的时间
+         */
         private long lastUpdateTimestamp;
 
         public String getFilterServerAddr() {

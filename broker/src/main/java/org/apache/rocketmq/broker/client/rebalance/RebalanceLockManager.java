@@ -27,11 +27,21 @@ import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.common.message.MessageQueue;
 
+/**
+ * 顺序消息消费的各个环节基本都是围绕消息消费队列(MessageQueue)与消息处理队列(ProcessQueue)展开的
+ * 消息进度消费都要判断ProcessQueue的locked是否未true，设置ProcessQueue的true的前提条件是消息消费者(cid)向Broker端发送锁定消息队列的请求并返回成功
+ */
 public class RebalanceLockManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.REBALANCE_LOCK_LOGGER_NAME);
+
+    // 锁最大存活时间
     private final static long REBALANCE_LOCK_MAX_LIVE_TIME = Long.parseLong(System.getProperty(
         "rocketmq.broker.rebalance.lockMaxLiveTime", "60000"));
     private final Lock lock = new ReentrantLock();
+
+    /**
+     * 锁容器，以消息消费组分组，每个消息队列对应一个锁对象，表示当前该消息队列被消费组中哪个消费组所持有
+     */
     private final ConcurrentMap<String/* group */, ConcurrentHashMap<MessageQueue, LockEntry>> mqLockTable =
         new ConcurrentHashMap<String, ConcurrentHashMap<MessageQueue, LockEntry>>(1024);
 
@@ -138,6 +148,7 @@ public class RebalanceLockManager {
                     }
 
                     for (MessageQueue mq : notLockedMqs) {
+
                         LockEntry lockEntry = groupValue.get(mq);
                         if (null == lockEntry) {
                             lockEntry = new LockEntry();

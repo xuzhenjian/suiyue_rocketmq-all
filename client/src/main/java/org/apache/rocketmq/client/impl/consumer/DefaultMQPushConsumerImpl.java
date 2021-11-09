@@ -328,7 +328,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
             // 如果ProcessQueue处于锁定
             if (processQueue.isLocked()) {
 
-                // 如果pullRequest没有被锁
+                /**
+                 * 如果该处理队列是第一次拉取任务，则首先计算拉取偏移量，然后向消息服务端拉取消息
+                 */
                 if (!pullRequest.isPreviouslyLocked()) {
                     long offset = -1L;
                     try {
@@ -354,6 +356,9 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                     pullRequest.setNextOffset(offset);
                 }
             } else {
+                /**
+                 * 如果消息处理队列未被锁定，则延迟3S再将PullRequest对象放入到拉取任务中
+                 */
                 this.executePullRequestLater(pullRequest, pullTimeDelayMillsWhenException);
                 log.info("pull message later because not locked in broker, {}", pullRequest);
                 return;
@@ -1050,12 +1055,24 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         }
     }
 
+    /**
+     * 基于类模式的消息过滤，其参数分别代表消费组订阅的消息主题，类过滤全路径名，类过滤源代码字符串
+     * @param topic
+     * @param fullClassName
+     * @param filterClassSource
+     * @throws MQClientException
+     */
     public void subscribe(String topic, String fullClassName, String filterClassSource) throws MQClientException {
         try {
             SubscriptionData subscriptionData = FilterAPI.buildSubscriptionData(topic, "*");
             subscriptionData.setSubString(fullClassName);
             subscriptionData.setClassFilterMode(true);
             subscriptionData.setFilterClassSource(filterClassSource);
+
+            /**
+             * 构建订阅信息，然后将该订阅信息添加到RebalanceImpl中，其主要目标是RebalanceImpl会对订阅信息表中的主题进行消息队列的负载
+             * 创建拉取任务，以便PullMessageService线程拉取消息
+             */
             this.rebalanceImpl.getSubscriptionInner().put(topic, subscriptionData);
             if (this.mQClientFactory != null) {
                 this.mQClientFactory.sendHeartbeatToAllBrokerWithLock();

@@ -65,6 +65,7 @@ public class ProcessQueue {
     private final AtomicLong msgCount = new AtomicLong();
 
     private final AtomicLong msgSize = new AtomicLong();
+
     private final Lock consumeLock = new ReentrantLock();
 
 
@@ -317,6 +318,11 @@ public class ProcessQueue {
 
     /**
      * 将consumingMsgOrderlyTreeMap的消息清除掉，表示成功处理该消息
+     *
+     *
+     * 提交就是将该批消息从ProcessQueue中移除，维护msgCount(消息处理队列中消息条数)并获取消息消费的偏移量offset
+     * 然后将该批消息从consumingMsgOrderlyTreeMap中移除，并返回待保存的消息消费进度(offset+1)
+     * 从中可以看出offset表示消息消费队列的逻辑偏移量，类似于数组的下标，代表第N个ConsumeQueue条目
      * @return
      */
     public long commit() {

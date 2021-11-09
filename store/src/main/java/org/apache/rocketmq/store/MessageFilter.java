@@ -25,9 +25,11 @@ import java.util.Map;
  * 类过滤classFilterMode，表达式模式Expression, 又分为ExpressionType.TAG和ExpressionType.SQL92
  *
  * TAG过滤，在服务端拉取时，会根据ConsumeQueue条目中存储的tag hashCode与订阅的tag(hashCode集合)进行匹配，匹配成功则放入待返回消息结果中
- * 然后在消息消费端(消费端，还会对消息的订阅消息字符串进行再一次过滤，为什么要进行两次过滤呢？ 主要就还是为了提供服务器端消费消息队列文件存储的性能)
+ * 然后在消息消费端(消费端，还会对消息的订阅消息字符串进行再一次过滤，为什么要进行两次过滤呢？ 主要就还是为了提高服务器端消费消息队列文件存储的性能)
  *
  * 如果直接进行字符串匹配，那么consumeQueue条目无法设置为定长结构，检索consumeQueue就不方便
+ *
+ *
  */
 public interface MessageFilter {
     /**
@@ -36,6 +38,13 @@ public interface MessageFilter {
      *
      * @param tagsCode tagsCode
      * @param cqExtUnit extend unit of consume queue
+     */
+
+    /**
+     * 根据ConsumeQueue判断消息是否匹配
+     * @param tagsCode 消息Tag的hashCode
+     * @param cqExtUnit consumeQueue条目扩展属性
+     * @return
      */
     boolean isMatchedByConsumeQueue(final Long tagsCode,
         final ConsumeQueueExt.CqExtUnit cqExtUnit);
@@ -47,6 +56,12 @@ public interface MessageFilter {
      *
      * @param msgBuffer message buffer in commit log, may be null if not invoked in store.
      * @param properties message properties, should decode from buffer if null by yourself.
+     */
+    /**
+     * 根据存储在commitLog文件中的内容判断消息是否匹配
+     * @param msgBuffer 消息内容，如果为空，该方法返回true
+     * @param properties 消息属性，主要用于表达式SQL92过滤模式
+     * @return
      */
     boolean isMatchedByCommitLog(final ByteBuffer msgBuffer,
         final Map<String, String> properties);
