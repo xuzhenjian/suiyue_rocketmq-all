@@ -73,6 +73,7 @@ public class PullAPIWrapper {
         PullResultExt pullResultExt = (PullResultExt) pullResult;
 
         this.updatePullFromWhichNode(mq, pullResultExt.getSuggestWhichBrokerId());
+
         if (PullStatus.FOUND == pullResult.getPullStatus()) {
             ByteBuffer byteBuffer = ByteBuffer.wrap(pullResultExt.getMessageBinary());
             List<MessageExt> msgList = MessageDecoder.decodes(byteBuffer);
@@ -122,6 +123,7 @@ public class PullAPIWrapper {
 
     public void updatePullFromWhichNode(final MessageQueue mq, final long brokerId) {
         AtomicLong suggest = this.pullFromWhichNodeTable.get(mq);
+
         if (null == suggest) {
             this.pullFromWhichNodeTable.put(mq, new AtomicLong(brokerId));
         } else {
@@ -249,6 +251,21 @@ public class PullAPIWrapper {
         throw new MQClientException("The broker[" + mq.getBrokerName() + "] not exist", null);
     }
 
+    /**
+     * pullFromWhichNodeTable缓存表中获取该消息消费队列的brokerId，如果找到返回brokerName的主节点。
+     *
+     * 那么pullFromWhichNodeTable消息从何而来？
+     * 消息消费拉取线程pullMessageService根据pullRequest请求从主服务器拉取消息后会返回下一次建议拉取的brokerId
+     * 消息消费线程在收到消息后，会根据主服务器的建议拉取brokerId来更新PullFromWhichNodeTable
+     *
+     *
+     * 那消息服务端是根据何种规则来建议哪个消息消费队列该从哪台Broker服务器上拉取信息呢?
+     *
+     * DefaultMessageStore#getMessage  853行
+     *
+     * @param mq
+     * @return
+     */
     public long recalculatePullFromWhichNode(final MessageQueue mq) {
         if (this.isConnectBrokerByUser()) {
             return this.defaultBrokerId;
@@ -262,6 +279,22 @@ public class PullAPIWrapper {
         return MixAll.MASTER_ID;
     }
 
+    /**
+     * 在消息拉取时，如果发现消息过滤模式为classFilter，将拉取消息服务器地址由原来的Broker地址转换成该Broker服务器对应的FilterServer
+     *
+     * 获取该消息主题的路由信息，从路由信息中获取Broker对应的FilterServer列表，如果不为空则随机从FilterServer列表中选择一个FilterServer
+     * 发送拉取消息请求到相应的FilterServer上，由于FilterServer会根据消息消费者的拉取任务将拉取请求转发给Broker
+     * 然后对返回的消息执行消息过滤逻辑，将匹配的消息返回给消息消费者
+     *
+     * 基于TAG模式消息过滤，由于在消息服务端进行消息过滤是匹配消息TAG的hashcode，导致服务过滤不是很准确
+     * 从服务端返回的消息最终并不一定是消息消费者订阅的消息，造成网络带宽的浪费，而基于类模式的消息过滤所有的过滤操作全部在FilterServer端进行
+     *
+     * 由于FilterServer与Broker运行在同一台机器上，消息的传输是通过本地回环通信，不会浪费Broker端的网络资源
+     * @param topic
+     * @param brokerAddr
+     * @return
+     * @throws MQClientException
+     */
     private String computePullFromWhichFilterServer(final String topic, final String brokerAddr)
         throws MQClientException {
         ConcurrentMap<String, TopicRouteData> topicRouteTable = this.mQClientFactory.getTopicRouteTable();

@@ -848,6 +848,23 @@ public class DefaultMessageStore implements MessageStore {
                          * 如果当前commitLog中的偏移量 - 当前最大拉取消息偏移量 > 允许消息在内存中存在的值，
                          * 建议下一次拉取任务从从节点开始拉取
                          */
+
+                        /**
+                         * maxOffsetPy: 代表当前主服务器消息存储文件最大偏移量
+                         * maxPhyOffsetPulling: 此次拉取消息最大偏移量
+                         * diff: 对于PullMessageService线程来说，当前未被拉取到消息消费端的消息长度
+                         *
+                         * TOTAL_PHYSICAL_MEMORY_SIZE: RocketMQ所在服务器总内存大小
+                         * accessMessageInMemoryMaxRatio表示RocketMQ所能使用的最大内存比例，超过该内存，消息被置换出内存
+                         * memory表示RocketMQ消息常驻内存的大小，超过该大小，RocketMQ会将旧的消息置换回磁盘
+                         *
+                         * 如果diff大于memory，表示当前需要拉取的消息已经超出了常驻内存的大小，表示主服务器繁忙，此时才建议从从服务器拉取
+                         *
+                         * 如果主服务器繁忙，则建议下一次从从服务器拉取消息
+                         * 设置suggestWhichBrokerId为配置文件中whichBrokerWhenConsumeSlowly属性，默认为1
+                         * 如果一个Master拥有多台Slave服务器，参与消息拉取负载的从服务器只会是其中一个
+                         *
+                         */
                         long diff = maxOffsetPy - maxPhyOffsetPulling;
 
                         long memory = (long) (StoreUtil.TOTAL_PHYSICAL_MEMORY_SIZE

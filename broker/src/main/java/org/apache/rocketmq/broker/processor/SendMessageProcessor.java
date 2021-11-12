@@ -351,6 +351,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                                 + "] sending transaction message is forbidden");
                 return CompletableFuture.completedFuture(response);
             }
+            /**
+             * 如果消息为prepare消息，就执行asyncPrepareMessage
+             */
             putMessageResult = this.brokerController.getTransactionalMessageService().asyncPrepareMessage(msgInner);
         } else {
             // 如果不是事务消息，调用DefaultMessageStore#putMessage进行消息存储

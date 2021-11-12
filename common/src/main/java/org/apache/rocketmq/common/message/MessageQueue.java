@@ -18,6 +18,11 @@ package org.apache.rocketmq.common.message;
 
 import java.io.Serializable;
 
+/**
+ * RocketMQ根据MessageQueue查找Broker地址的唯一依据是brokerName
+ * 从RocketMQ的Broker组织结构中得知同一组Broker(M-S)服务器，它们的brokerName相同但brokerId不同
+ * 主服务器的brokerId为0，从服务器的brokerId大于0，RocketMQ提供MQClientFactory.findBrokerAddressInSubscribe来实现根据brokerName,brokerId查找Broker地址
+ */
 public class MessageQueue implements Comparable<MessageQueue>, Serializable {
 
     private static final long serialVersionUID = 6191200464116433425L;

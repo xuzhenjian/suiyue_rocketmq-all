@@ -144,7 +144,9 @@ public class MessageStoreConfig {
     private int haListenPort = 10912;
     private int haSendHeartbeatInterval = 1000 * 5;
     private int haHousekeepingInterval = 1000 * 20;
+
     private int haTransferBatchSize = 1024 * 32;
+
     @ImportantField
     private String haMasterAddress = null;
     private int haSlaveFallbehindMax = 1024 * 1024 * 256;

@@ -172,7 +172,7 @@ public class FilterServerManager {
      */
     static class FilterServerInfo {
 
-        /**
+        /**x
          * FilterServer服务器地址
          */
         private String filterServerAddr;

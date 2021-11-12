@@ -1076,6 +1076,18 @@ public class MQClientInstance {
         return null;
     }
 
+    /**
+     * 从brokerAddrTable地址缓存表中根据brokerName获取所有的broker信息
+     *
+     * 根据brokerId从Broker缓存表中获取指定brokerName, 如果根据brokerId未找到相关的条目，此时如果onlyThisBroker为false,则随机返回Broker中任意一个Broker，否则返回null
+     *
+     * 组装findBrokerResult时，需要设置是否是slave属性，如果brokerId=0,表示是主节点，否则是从节点
+     *
+     * @param brokerName
+     * @param brokerId
+     * @param onlyThisBroker 是否必须返回brokerId的Broker对应的服务器信息
+     * @return
+     */
     public FindBrokerResult findBrokerAddressInSubscribe(
         final String brokerName,
         final long brokerId,

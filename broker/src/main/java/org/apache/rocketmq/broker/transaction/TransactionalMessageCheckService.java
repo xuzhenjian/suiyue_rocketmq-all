@@ -22,6 +22,12 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 
+/**
+ * RocketMQ基于两阶段协议发送与提交回滚消息
+ *
+ * 事务消息存储在消息服务器时，主题被替换为RMQ_SYS_TRANS_HALF_TOPIC, 执行完本地事务返回状态为UN_KNOW,结束时将不做任务处理
+ * 而是通过事务状态定时回查得到发送端明确的事务操作(提交事务或者回滚事务)
+ */
 public class TransactionalMessageCheckService extends ServiceThread {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.TRANSACTION_LOGGER_NAME);
 

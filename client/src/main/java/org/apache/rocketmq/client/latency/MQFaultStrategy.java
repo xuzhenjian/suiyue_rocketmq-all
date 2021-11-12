@@ -123,4 +123,9 @@ public class MQFaultStrategy {
 
         return 0;
     }
+
+    public static void main(String[] args) {
+        MQFaultStrategy mqFaultStrategy = new MQFaultStrategy();
+        System.out.println(mqFaultStrategy.computeNotAvailableDuration(30000));
+    }
 }
