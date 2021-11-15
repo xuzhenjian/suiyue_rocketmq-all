@@ -102,7 +102,7 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
      * 为什么需要这样处理呢？
      *
      * 主要是因为下文的发送事务消息是异步处理的，无法立刻知道其处理结果
-     * 为了避免简化prepare消息队列和处理队列的消息消费进度处理，先存储，然后消费进度向前推进
+     * 为了简化prepare消息队列和处理队列的消息消费进度处理，先存储，然后消费进度向前推进
      *
      * 重复发送的消息在事务回查之前会判断是否处理过，另一个目的就是需要修改消息的检查次数，RocketMQ的存储设计是顺序写，去修改已存储的消息，无法保证高性能
      * @param msgExt
