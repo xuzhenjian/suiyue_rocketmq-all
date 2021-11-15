@@ -24,4 +24,25 @@ public class TransactionMain {
      * 如果在超时回查次数后依然无法获知消息的事务状态，则默认回滚消息
      *
      */
+
+    /**
+     * TransactionalMessageCheckService#run 该线程每1分钟频率进行事务回调操作，可通过transactionCheckInterval参数配置，单位ms
+     *
+     * TransactionalMessageService#check
+     * 1.查询RMQ_SYS_TRANS_HALF_TOPIC主题下的消息队列，该主题是prepare消息的存储队列
+     * 2.遍历每一个消息消费队列，每个消息消费队列的处理时间为60S
+     * 3.根据RMQ_SYS_TRANS_HALF_TOPIC#queueId，获取对应RMQ_SYS_TRANS_HALF_TOPIC主题下的队列，该主题已经提交或者回滚的消息队列
+     * 4.获取HALF, OP队列的当前进度
+     * 5.根据OP队列当前的更新进度，往后获取32条消息
+     * 6.判断需要发送回查的消息，其约束条件主要包括本地事务超时时间，消息有效性，以及消息是否已发送回查消息等
+     * 7.异步发送回查消息
+     * 8.更新HALF,OP队列的处理进度
+     *
+     * AbstractTransactionMessageCheckListener#resolveHalfMsg 展示异步发送消息回查进度
+     * AbstractTransactionMessageCheckListener#sendCheckMessage 组装回查请求命令，根据生产者组，选择网络通道，从broker向生产者发送回查事务状态命令，CHECK,TRANSACTION_STATE
+     * ClientRemotingProcessor#checkTransactionState
+     * DefaultMQProducerImpl#checkTransactionState
+     * TransactionListener#checkLocalTransaction 该方法中，由应用程序根据消息ID告诉RocketMQ该条消息的事务状态，是成功，还是回滚，还是未知
+     * 根据事务状态发送END_TRANSACTION: 发送END_TRANSACTION命令给Broker，如果发送UNKNOWN,broker不会做任何动作，只会打印info级别日志
+     */
 }

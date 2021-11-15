@@ -58,6 +58,21 @@ public abstract class AbstractTransactionalMessageCheckListener {
         this.brokerController = brokerController;
     }
 
+    /**
+     * 首先构建事务状态回查请求消息，核心参数包括offsetId,消息ID索引，消息事务ID，事务消息队列中的偏移量，消息主题，消息队列
+     * 然后根据消息的生产者组，从中随机选择一个消息发送者，最后向消息发送者发送事务回查命令
+     *
+     *
+     * 事务回查命令的最终处理者为ClientRemotingProcessor的processRequest方法，最终将任务提交到TransactionMQProducer的线程池中执行
+     * 最终调用应用程序实现的TransactionListener的checkLocalTransaction方法，返回事务状态
+     *
+     * 如果事务状态为commit，则向broker发送提交事务命令
+     * 如果事务状态为rollback,则向broker发送回滚命令
+     * 如果事务状态为unknown,则broker忽略
+     *
+     * @param msgExt
+     * @throws Exception
+     */
     public void sendCheckMessage(MessageExt msgExt) throws Exception {
         CheckTransactionStateRequestHeader checkTransactionStateRequestHeader = new CheckTransactionStateRequestHeader();
         checkTransactionStateRequestHeader.setCommitLogOffset(msgExt.getCommitLogOffset());
