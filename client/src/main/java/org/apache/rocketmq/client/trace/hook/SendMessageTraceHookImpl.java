@@ -40,6 +40,18 @@ public class SendMessageTraceHookImpl implements SendMessageHook {
         return "SendMessageTraceHook";
     }
 
+    /**
+     * 如果topic主题为消息轨迹的topic，直接返回
+     *
+     * 在消息发送上下文中，设置用来跟踪消息轨迹的上下环境，里面主要包含一个TraceBean集合，追踪类型与生产者所属的组
+     *
+     * 构建一条跟踪消息，用TraceBean来表示，记录原消息的topic,tags,keys，发送到broker地址，消息体长度等消息
+     *
+     * sendMessageBefore主要的用途就是在消息发送的时候，先准备一部分消息跟踪日志，存储在发送上下文环境中，此时并不会发送消息轨迹数据
+     *
+     *
+     * @param context
+     */
     @Override
     public void sendMessageBefore(SendMessageContext context) {
         //if it is message trace data,then it doesn't recorded
@@ -63,6 +75,14 @@ public class SendMessageTraceHookImpl implements SendMessageHook {
         tuxeContext.getTraceBeans().add(traceBean);
     }
 
+    /**
+     * 如果topic主题为消息轨迹的topic，直接返回
+     * 从MqTraceContext中获取跟踪的traceBean，虽然设计成List,但是在消息发送场景，这里的数据永远只有一条
+     *
+     * 获取消息发送收到响应结果的耗时
+     *
+     * @param context
+     */
     @Override
     public void sendMessageAfter(SendMessageContext context) {
         //if it is message trace data,then it doesn't recorded
@@ -84,15 +104,24 @@ public class SendMessageTraceHookImpl implements SendMessageHook {
         TraceBean traceBean = tuxeContext.getTraceBeans().get(0);
         int costTime = (int) ((System.currentTimeMillis() - tuxeContext.getTimeStamp()) / tuxeContext.getTraceBeans().size());
         tuxeContext.setCostTime(costTime);
+
         if (context.getSendResult().getSendStatus().equals(SendStatus.SEND_OK)) {
             tuxeContext.setSuccess(true);
         } else {
             tuxeContext.setSuccess(false);
         }
+
+        /**
+         * 设置耗时， 是否发送成功，发送到broker的分区，消息ID，消息物理偏移量(如果是批量消息，则是最后一条消息的物理偏移量)
+         *
+         *
+         */
         tuxeContext.setRegionId(context.getSendResult().getRegionId());
         traceBean.setMsgId(context.getSendResult().getMsgId());
         traceBean.setOffsetMsgId(context.getSendResult().getOffsetMsgId());
         traceBean.setStoreTime(tuxeContext.getTimeStamp() + costTime / 2);
+
+        // 通过TraceDispatcher转发到broker服务器
         localDispatcher.append(tuxeContext);
     }
 }

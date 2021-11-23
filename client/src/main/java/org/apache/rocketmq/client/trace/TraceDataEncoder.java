@@ -148,6 +148,7 @@ public class TraceDataEncoder {
         TraceTransferBean transferBean = new TraceTransferBean();
         StringBuilder sb = new StringBuilder(256);
         switch (ctx.getTraceType()) {
+            // 消息发送
             case Pub: {
                 TraceBean bean = ctx.getTraceBeans().get(0);
                 //append the content of context and traceBean to transferBean's TransData
@@ -167,6 +168,7 @@ public class TraceDataEncoder {
                     .append(ctx.isSuccess()).append(TraceConstants.FIELD_SPLITOR);//
             }
             break;
+            // 消息消费之前
             case SubBefore: {
                 for (TraceBean bean : ctx.getTraceBeans()) {
                     sb.append(ctx.getTraceType()).append(TraceConstants.CONTENT_SPLITOR)//
@@ -180,6 +182,7 @@ public class TraceDataEncoder {
                 }
             }
             break;
+            // 消息消费之后
             case SubAfter: {
                 for (TraceBean bean : ctx.getTraceBeans()) {
                     sb.append(ctx.getTraceType()).append(TraceConstants.CONTENT_SPLITOR)//

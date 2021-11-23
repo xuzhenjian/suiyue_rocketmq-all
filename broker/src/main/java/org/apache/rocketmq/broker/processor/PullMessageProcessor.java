@@ -109,7 +109,7 @@ public class PullMessageProcessor extends AsyncNettyRequestProcessor implements 
      *
      * RocketMQ轮询机制由两个线程共同完成
      * 1. PullRequestHoldService: 每隔5s重试一次
-     * 2. DefaultMessageStore#reputMessageSService，每处理一次重新拉取，Thread.sleep(1)，继续下一次检查
+     * 2. DefaultMessageStore#reputMessageService，每处理一次重新拉取，Thread.sleep(1)，继续下一次检查
      *
      * @return
      * @throws RemotingCommandException

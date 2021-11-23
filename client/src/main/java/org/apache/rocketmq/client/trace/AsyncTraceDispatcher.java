@@ -52,26 +52,70 @@ import org.apache.rocketmq.remoting.RPCHook;
 
 import static org.apache.rocketmq.client.trace.TraceConstants.TRACE_INSTANCE_NAME;
 
+/**
+ * 异步实现消息轨迹数据的发送
+ */
 public class AsyncTraceDispatcher implements TraceDispatcher {
 
     private final static InternalLogger log = ClientLogger.getLog();
     private final static AtomicInteger COUNTER = new AtomicInteger();
+
+    /**
+     *异步转发，队列长度，默认为2048，异步线程池能够积压的消息轨迹数量
+     */
     private final int queueSize;
+
+    /**
+     * 批量消息条数，消息轨迹一次消息发送请求包含的数据条数，默认为100
+     */
     private final int batchSize;
+
+    /**
+     * 向Broker汇报轨迹时，消息体的总大小不能超过该值，默认为128K
+     */
     private final int maxMsgSize;
+
+
     private final DefaultMQProducer traceProducer;
+
+    /**
+     * 用于发送到Broker服务的异步线程池，核心线程数默认为10，最大线程池为20，队列堆积长度2048,线程名称:MQTraceSendThread_
+     */
     private final ThreadPoolExecutor traceExecutor;
+
+
     // The last discard number of log
+    // 记录丢弃的消息个数
+    /**
+     * 整个运行过程中，丢弃的消息轨迹数据，这里要说明一点的是，如果消息TPS发送过大，异步转发线程处理不过来时，会主动丢弃消息轨迹数据
+     */
     private AtomicLong discardCount;
+
+    /**
+     * worker线程，主要负责从追加队列中获取一批待发送的消息轨迹数据，提交到线程池中执行
+     */
     private Thread worker;
+
+    /**
+     * 消息轨迹TraceContext队列，用来存放待发送到服务端的消息
+     */
     private final ArrayBlockingQueue<TraceContext> traceContextQueue;
+
+    /**
+     * 线程池内部队列，默认长度1024
+     */
     private ArrayBlockingQueue<Runnable> appenderQueue;
+
     private volatile Thread shutDownHook;
     private volatile boolean stopped = false;
     private DefaultMQProducerImpl hostProducer;
     private DefaultMQPushConsumerImpl hostConsumer;
     private volatile ThreadLocalIndex sendWhichQueue = new ThreadLocalIndex();
     private String dispatcherId = UUID.randomUUID().toString();
+
+    /**
+     * 用于接收消息轨迹的topic，默认为RMQ_SYS_TRANS_HALF_TOPIC
+     */
     private String traceTopicName;
     private AtomicBoolean isStarted = new AtomicBoolean(false);
     private AccessChannel accessChannel = AccessChannel.LOCAL;
@@ -142,6 +186,10 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
 
     public void start(String nameSrvAddr, AccessChannel accessChannel) throws MQClientException {
         if (isStarted.compareAndSet(false, true)) {
+            /**
+             * 如果用于发送消息轨迹的发送者没有启动，则设置nameserver地址，并启动
+             * 启动一个线程，用于执行AsyncRunnable任务
+             */
             traceProducer.setNamesrvAddr(nameSrvAddr);
             traceProducer.setInstanceName(TRACE_INSTANCE_NAME + "_" + nameSrvAddr);
             traceProducer.start();
@@ -153,6 +201,12 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
         this.registerShutDownHook();
     }
 
+    /**
+     * 如果还未建立发送者，则创建用于发送消息轨迹的消息发送者，其GroupName为_INNER_TRACE_PRODUCER，消息发送超时时间5S，
+     * 最大允许发送消息大小128K
+     * @param rpcHook
+     * @return
+     */
     private DefaultMQProducer getAndCreateTraceProducer(RPCHook rpcHook) {
         DefaultMQProducer traceProducerInstance = this.traceProducer;
         if (traceProducerInstance == null) {
@@ -240,6 +294,11 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
     class AsyncRunnable implements Runnable {
         private boolean stopped;
 
+        /**
+         * 构建待提交跟踪bean，每次最多发送batchSize，默认为100条
+         * 从traceContextQueue中取出一个待提交的TraceContext，设置超时时间为5s，即如果该队列中没有待提交的TraceContext，则最多等待5S
+         * 向线程池中提交任务AsyncAppenderRequest
+         */
         @Override
         public void run() {
             while (!stopped) {
@@ -286,6 +345,12 @@ public class AsyncTraceDispatcher implements TraceDispatcher {
             sendTraceData(contextList);
         }
 
+        /**
+         * 遍历收集的消息轨迹数据
+         * 获取存储消息轨迹的topic
+         * 对TraceContext进行编码，将编码后的数据发送到Broker服务器
+         * @param contextList
+         */
         public void sendTraceData(List<TraceContext> contextList) {
             Map<String, List<TraceTransferBean>> transBeanMap = new HashMap<String, List<TraceTransferBean>>();
             for (TraceContext context : contextList) {
