@@ -63,6 +63,14 @@ public class PermName {
     }
 
     public static boolean isInherited(final int perm) {
+        /**
+         * 0111
+         * 0001
+         *
+         *
+         * 0100
+         * 0001
+         */
         return (perm & PERM_INHERIT) == PERM_INHERIT;
     }
 
@@ -75,6 +83,11 @@ public class PermName {
         int perm = PermName.PERM_READ | PermName.PERM_WRITE;
         int value = perm &= ~PermName.PERM_INHERIT;
         System.out.println(perm);
-        System.out.println(value);
+
+        System.out.println(isInherited(2));
+        System.out.println(isInherited(4));
+        System.out.println(isInherited(6));
+        System.out.println(isInherited(7));
+
     }
 }

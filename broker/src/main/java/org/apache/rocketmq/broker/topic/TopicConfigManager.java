@@ -230,6 +230,37 @@ public class TopicConfigManager extends ConfigManager {
         return topicConfig;
     }
 
+    public static void main(String[] args) {
+        int perm = 7;
+
+        System.out.println(perm);
+
+        /**
+         * 0111
+         * 0001
+         *
+         * 1000
+         *
+         * 0111
+         */
+        perm &= ~PermName.PERM_INHERIT;
+
+        System.out.println(perm);
+
+        /**
+         * 0111
+         *
+         * 1000
+         * 0000 0000 0000 0001
+         * 1111 1111 1111 1110
+         * 0000000000000  0111
+         *
+         *                0110 = 6
+         */
+        System.out.println(~PermName.PERM_INHERIT);
+        System.out.println(PermName.PERM_INHERIT);
+    }
+
     public TopicConfig createTopicInSendMessageBackMethod(
         final String topic,
         final int clientDefaultTopicQueueNums,
