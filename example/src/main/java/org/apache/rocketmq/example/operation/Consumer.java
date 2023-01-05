@@ -29,44 +29,73 @@ import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyContext;
 import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus;
 import org.apache.rocketmq.client.consumer.listener.MessageListenerConcurrently;
 import org.apache.rocketmq.client.exception.MQClientException;
+import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
 import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
 
 public class Consumer {
 
     public static void main(String[] args) throws InterruptedException, MQClientException {
-        CommandLine commandLine = buildCommandline(args);
-        if (commandLine != null) {
-            String group = commandLine.getOptionValue('g');
-            String topic = commandLine.getOptionValue('t');
-            String subscription = commandLine.getOptionValue('s');
-            final String returnFailedHalf = commandLine.getOptionValue('f');
 
-            DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(group);
-            consumer.setInstanceName(Long.toString(System.currentTimeMillis()));
 
-            consumer.subscribe(topic, subscription);
+        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("xuzj-consumer");
+        consumer.setNamesrvAddr("rorkctmq.ppd-base-test:31109");
 
-            consumer.registerMessageListener(new MessageListenerConcurrently() {
-                AtomicLong consumeTimes = new AtomicLong(0);
+        // topic , 过滤器 * 表示不过滤
+        consumer.subscribe("saint-xuzj-topic", "*");
+        consumer.setConsumeTimeout(20L);
+        consumer.setConsumeFromWhere(ConsumeFromWhere.CONSUME_FROM_LAST_OFFSET);
+        // 消息传播模式
+        consumer.setMessageModel(MessageModel.CLUSTERING);
 
-                @Override
-                public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> msgs,
-                    ConsumeConcurrentlyContext context) {
-                    long currentTimes = this.consumeTimes.incrementAndGet();
-                    System.out.printf("%-8d %s%n", currentTimes, msgs);
-                    if (Boolean.parseBoolean(returnFailedHalf)) {
-                        if ((currentTimes % 2) == 0) {
-                            return ConsumeConcurrentlyStatus.RECONSUME_LATER;
-                        }
-                    }
-                    return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+        consumer.registerMessageListener(new MessageListenerConcurrently() {
+            @Override
+            public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> msgs, ConsumeConcurrentlyContext consumeConcurrentlyContext) {
+                for (MessageExt msg : msgs) {
+                    System.out.println(new String(msg.getBody()));
                 }
-            });
+                // ack机制
+                return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+            }
+        });
 
-            consumer.start();
+        consumer.start();
+        System.out.println("Consumer start。。。。。。");
 
-            System.out.printf("Consumer Started.%n");
-        }
+
+//        CommandLine commandLine = buildCommandline(args);
+//        if (commandLine != null) {
+//            String group = commandLine.getOptionValue('g');
+//            String topic = commandLine.getOptionValue('t');
+//            String subscription = commandLine.getOptionValue('s');
+//            final String returnFailedHalf = commandLine.getOptionValue('f');
+//
+//            DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(group);
+//            consumer.setInstanceName(Long.toString(System.currentTimeMillis()));
+//
+//            consumer.subscribe(topic, subscription);
+//
+//            consumer.registerMessageListener(new MessageListenerConcurrently() {
+//                AtomicLong consumeTimes = new AtomicLong(0);
+//
+//                @Override
+//                public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> msgs,
+//                    ConsumeConcurrentlyContext context) {
+//                    long currentTimes = this.consumeTimes.incrementAndGet();
+//                    System.out.printf("%-8d %s%n", currentTimes, msgs);
+//                    if (Boolean.parseBoolean(returnFailedHalf)) {
+//                        if ((currentTimes % 2) == 0) {
+//                            return ConsumeConcurrentlyStatus.RECONSUME_LATER;
+//                        }
+//                    }
+//                    return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+//                }
+//            });
+//
+//            consumer.start();
+//
+//            System.out.printf("Consumer Started.%n");
+//        }
     }
 
     public static CommandLine buildCommandline(String[] args) {

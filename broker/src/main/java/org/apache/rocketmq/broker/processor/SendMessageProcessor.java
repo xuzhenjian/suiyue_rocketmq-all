@@ -376,7 +376,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
     }
 
     /**
-     * 如果消息重试次数超过允许的最大重试次数，消息将进入DLD延迟队列，延迟队列TOPIC: %DLQ%+消息组名
+     * 如果消息重试次数超过允许的最大重试次数，消息将进入DLQ延迟队列，延迟队列TOPIC: %DLQ%+消息组名
      * @param requestHeader
      * @param response
      * @param request

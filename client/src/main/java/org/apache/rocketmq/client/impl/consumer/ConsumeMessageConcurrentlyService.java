@@ -294,7 +294,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         }
 
         /**
-         * 如果是集群模式，业务方返回RECONSUME_LATER，消息并不会重新被消费，只是以警告级别输出到日志文件
+         * 如果是广播模式，业务方返回RECONSUME_LATER，消息并不会重新被消费，只是以警告级别输出到日志文件
          * 如果是集群模式，消息消费成功，由于ackIndex=consumeRequest.getMsgs().size() - 1
          * 故i=ackIndex+1等于consumeRequest.getMsgs().size(),并不会执行sendMessageBack
          *

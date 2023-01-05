@@ -68,7 +68,7 @@ public class MQFaultStrategy {
     /**
      * 根据对消息队列进行轮询，获取一个消息队列
      * 验证该消息队列是否可用，latencyFaultTolerance.isAvailable(brokerName)
-     * 如果返回的messageQueue可用，移除latencyFaultTolerance关于该topic条目，表明该broker故障已经恢复
+     * 如果返回的messageQueue可用，移除latencyFaultTolerance关于该topic条目，表明该broker故障已经恢复-------不进行移除，只有broker下线才会移除
      * @param tpInfo
      * @param lastBrokerName
      * @return
